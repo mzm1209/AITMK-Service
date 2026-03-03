@@ -5,6 +5,7 @@ import com.example.aitmk.model.webhook.WhatsAppWebhookRequest;
 import com.example.aitmk.parser.WhatsAppMessageParser;
 import com.example.aitmk.service.WhatsAppWebhookService;
 import com.example.aitmk.service.AiService;
+import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.SendMessageService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
     private final ObjectMapper objectMapper;
 
     private final AiService aiService;
+    private final ChatHistoryService chatHistoryService;
     private final SendMessageService sendService;
     @Override
     @Async
@@ -54,6 +56,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
 
                         log.info("Parsed Message: {}", parsed);
 
+                        chatHistoryService.recordCustomerMessage(parsed.getFrom(), parsed.getText());
+
                         // TODO:
                         // 1. 存数据库
                         // 2. 推送 MQ
@@ -67,6 +71,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
 
                         // 打印日志，方便调试
                         log.info("aiReply Message: {}", aiAnswer);
+
+                        chatHistoryService.recordAiReply(parsed.getFrom(), aiAnswer);
 
 
                         // 4. 自动回复
