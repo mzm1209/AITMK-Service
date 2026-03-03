@@ -12,9 +12,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * 基于内存的聊天历史实现：
+ * 适用于开发联调与轻量部署场景，服务重启后数据会丢失。
+ */
 @Service
 public class InMemoryChatHistoryService implements ChatHistoryService {
 
+    /**
+     * 以客户 ID 作为 Key 存放消息列表。
+     * 使用 ConcurrentHashMap 保证并发读写安全。
+     */
     private final Map<String, List<ChatMessageRecord>> recordsByCustomer = new ConcurrentHashMap<>();
 
     @Override
@@ -32,6 +40,9 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
         append(customerId, "agent", message);
     }
 
+    /**
+     * 返回客户摘要列表：提取每个客户最后一条消息并按时间倒序排序。
+     */
     @Override
     public List<ChatCustomer> listCustomers() {
         return recordsByCustomer.entrySet().stream()
@@ -52,12 +63,18 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                 .toList();
     }
 
+    /**
+     * 返回某个客户的全部消息，拷贝新列表避免调用方误改内部状态。
+     */
     @Override
     public List<ChatMessageRecord> listMessages(String customerId) {
         List<ChatMessageRecord> messages = recordsByCustomer.getOrDefault(customerId, List.of());
         return new ArrayList<>(messages);
     }
 
+    /**
+     * 统一追加消息记录。
+     */
     private void append(String customerId, String sender, String message) {
         recordsByCustomer.compute(customerId, (key, records) -> {
             List<ChatMessageRecord> updated = records == null ? new ArrayList<>() : new ArrayList<>(records);

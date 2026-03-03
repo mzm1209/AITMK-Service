@@ -56,6 +56,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
 
                         log.info("Parsed Message: {}", parsed);
 
+                        // 记录客户原始消息，供客服端会话列表与消息窗展示
                         chatHistoryService.recordCustomerMessage(parsed.getFrom(), parsed.getText());
 
                         // TODO:
@@ -72,6 +73,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
                         // 打印日志，方便调试
                         log.info("aiReply Message: {}", aiAnswer);
 
+                        // 记录 AI 自动回复，确保聊天记录可回溯
                         chatHistoryService.recordAiReply(parsed.getFrom(), aiAnswer);
 
 
