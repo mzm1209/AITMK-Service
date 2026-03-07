@@ -3,87 +3,91 @@ package com.example.aitmk.service.impl;
 import com.example.aitmk.model.domain.WhatsAppMessage;
 import com.example.aitmk.model.webhook.WhatsAppWebhookRequest;
 import com.example.aitmk.parser.WhatsAppMessageParser;
-import com.example.aitmk.service.WhatsAppWebhookService;
+import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.AiService;
 import com.example.aitmk.service.ChatHistoryService;
+import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.WhatsAppWebhookService;
+import com.example.aitmk.util.AiReplyParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import com.example.aitmk.util.AiReplyParser;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService  {
+public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
     private final ObjectMapper objectMapper;
-
     private final AiService aiService;
     private final ChatHistoryService chatHistoryService;
     private final SendMessageService sendService;
+    private final AgentDispatchService agentDispatchService;
+    private final CrmOpenApiService crmOpenApiService;
+
     @Override
     @Async
     public void process(String payload) {
-
         try {
-
-            WhatsAppWebhookRequest request =
-                    objectMapper.readValue(payload,
-                            WhatsAppWebhookRequest.class);
-
+            WhatsAppWebhookRequest request = objectMapper.readValue(payload, WhatsAppWebhookRequest.class);
             if (request.getEntry() == null) {
                 return;
             }
 
             request.getEntry().forEach(entry -> {
-
-                if (entry.getChanges() == null) return;
+                if (entry.getChanges() == null) {
+                    return;
+                }
 
                 entry.getChanges().forEach(change -> {
-
-                    if (change.getValue() == null ||
-                            change.getValue().getMessages() == null) {
+                    if (change.getValue() == null || change.getValue().getMessages() == null) {
                         return;
                     }
 
+                    String businessAccountId = "1019964791197772";
+                    if (change.getValue().getMetadata() != null
+                            && change.getValue().getMetadata().getPhone_number_id() != null
+                            && !change.getValue().getMetadata().getPhone_number_id().isBlank()) {
+                        businessAccountId = change.getValue().getMetadata().getPhone_number_id();
+                    }
+
                     change.getValue().getMessages().forEach(message -> {
+                        WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
+                        String customerPhone = parsed.getFrom();
+                        String customerText = parsed.getText() == null ? "" : parsed.getText();
 
-                        WhatsAppMessage parsed =
-                                WhatsAppMessageParser.parse(message);
+                        if (customerPhone == null || customerPhone.isBlank()) {
+                            return;
+                        }
 
-                        log.info("Parsed Message: {}", parsed);
+                        // 记录客户消息（本地 + CRM）
+                        chatHistoryService.recordCustomerMessage(customerPhone, customerText);
+                        String assignedAgent = agentDispatchService.getAssignedAgent(customerPhone).orElse(null);
+                        crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerText);
 
-                        // 记录客户原始消息，供客服端会话列表与消息窗展示
-                        chatHistoryService.recordCustomerMessage(parsed.getFrom(), parsed.getText());
+                        if (assignedAgent != null && !assignedAgent.isBlank()) {
+                            // 已有坐席接待，停止 AI 自动回复，仅记录消息并交给坐席处理
+                            return;
+                        }
 
-                        // TODO:
-                        // 1. 存数据库
-                        // 2. 推送 MQ
-                        // 3. 调用 AI
-
-                        // 阻塞获取 AI 回复 JSON
-                        String aiReplyJson = aiService.chat(parsed.getText());
-
-                        // 解析 answer 字段
+                        // 未分配坐席：继续 AI 自动回复
+                        String aiReplyJson = aiService.chat(customerText);
                         String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
 
-                        // 打印日志，方便调试
-                        log.info("aiReply Message: {}", aiAnswer);
+                        chatHistoryService.recordAiReply(customerPhone, aiAnswer);
+                        sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+                        crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
 
-                        // 记录 AI 自动回复，确保聊天记录可回溯
-                        chatHistoryService.recordAiReply(parsed.getFrom(), aiAnswer);
-
-
-                        // 4. 自动回复
-                         sendService.sendTextMessage("1019964791197772",parsed.getFrom(), aiAnswer);
-
+                        // AI 首次完成后，若当前有在线坐席则按登录顺序分配
+                        agentDispatchService.assignIfAbsent(customerPhone).ifPresent(agentRowId -> {
+                            crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        });
                     });
                 });
             });
-
         } catch (Exception e) {
             log.error("Webhook processing error", e);
         }
