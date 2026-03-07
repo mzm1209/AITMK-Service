@@ -1,9 +1,11 @@
 package com.example.aitmk.service.impl;
 
+import com.example.aitmk.model.domain.ChatMessageRecord;
 import com.example.aitmk.model.domain.WhatsAppMessage;
 import com.example.aitmk.model.webhook.WhatsAppWebhookRequest;
 import com.example.aitmk.parser.WhatsAppMessageParser;
 import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.AgentPushService;
 import com.example.aitmk.service.AiService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
@@ -16,6 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.Instant;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -26,6 +30,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final ChatHistoryService chatHistoryService;
     private final SendMessageService sendService;
     private final AgentDispatchService agentDispatchService;
+    private final AgentPushService agentPushService;
     private final CrmOpenApiService crmOpenApiService;
 
     @Override
@@ -54,6 +59,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         businessAccountId = change.getValue().getMetadata().getPhone_number_id();
                     }
 
+                    String finalBusinessAccountId = businessAccountId;
                     change.getValue().getMessages().forEach(message -> {
                         WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
                         String customerPhone = parsed.getFrom();
@@ -66,10 +72,18 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         // 记录客户消息（本地 + CRM）
                         chatHistoryService.recordCustomerMessage(customerPhone, customerText);
                         String assignedAgent = agentDispatchService.getAssignedAgent(customerPhone).orElse(null);
-                        crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerText);
+                        crmOpenApiService.addChatRecord(finalBusinessAccountId, customerPhone, assignedAgent, "客户", customerText);
+
+                        ChatMessageRecord customerRecord = ChatMessageRecord.builder()
+                                .customerId(customerPhone)
+                                .sender("customer")
+                                .message(customerText)
+                                .timestamp(Instant.now())
+                                .build();
 
                         if (assignedAgent != null && !assignedAgent.isBlank()) {
-                            // 已有坐席接待，停止 AI 自动回复，仅记录消息并交给坐席处理
+                            // 已有坐席接待：停止 AI 自动回复，改为实时推送给坐席客户端
+                            agentPushService.pushNewMessage(assignedAgent, customerPhone, customerRecord);
                             return;
                         }
 
@@ -78,12 +92,14 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
 
                         chatHistoryService.recordAiReply(customerPhone, aiAnswer);
-                        sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
-                        crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
+                        sendService.sendTextMessage(finalBusinessAccountId, customerPhone, aiAnswer);
+                        crmOpenApiService.addChatRecord(finalBusinessAccountId, customerPhone, null, "AI", aiAnswer);
 
-                        // AI 首次完成后，若当前有在线坐席则按登录顺序分配
+                        // AI 首次完成后，若当前有在线坐席则按登录顺序分配，并推送完整历史
                         agentDispatchService.assignIfAbsent(customerPhone).ifPresent(agentRowId -> {
                             crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                            agentPushService.pushHistory(agentRowId, customerPhone,
+                                    chatHistoryService.listMessages(customerPhone));
                         });
                     });
                 });
