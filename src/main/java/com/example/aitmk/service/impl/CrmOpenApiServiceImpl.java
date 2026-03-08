@@ -67,8 +67,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     public Optional<CrmAgentAccount> verifyLogin(String username, String password) {
         try {
             List<Map<String, Object>> filters = new ArrayList<>();
-            filters.add(filter(LOGIN_ACCOUNT_CONTROL_ID, username));
-            filters.add(filter(LOGIN_PASSWORD_CONTROL_ID, password));
+            filters.add(filter(LOGIN_ACCOUNT_CONTROL_ID, username,2,1,2));
+            filters.add(filter(LOGIN_PASSWORD_CONTROL_ID, password,2,1,2));
 
             JsonNode root = getFilterRows(LOGIN_WORKSHEET_ID, filters, 50);
             if (root == null || !root.path("success").asBoolean(false)) {
@@ -220,7 +220,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public Set<String> listOnlineAgents() {
-        List<Map<String, Object>> filters = List.of(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线"));
+        List<Map<String, Object>> filters = List.of(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
         JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 500);
         if (root == null || !root.path("success").asBoolean(false)) {
             return Set.of();
@@ -309,12 +309,12 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         return item;
     }
 
-    private static Map<String, Object> filter(String controlId, String value) {
+    private static Map<String, Object> filter(String controlId, String value, int dataType ,int spliceType,int filterType) {
         Map<String, Object> item = new HashMap<>();
         item.put("controlId", controlId);
-        item.put("dataType", 6);
-        item.put("spliceType", 1);
-        item.put("filterType", 13);
+        item.put("dataType", dataType);
+        item.put("spliceType", spliceType);
+        item.put("filterType", filterType);
         item.put("value", value);
         return item;
     }
