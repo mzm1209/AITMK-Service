@@ -96,10 +96,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         crmOpenApiService.addChatRecord(finalBusinessAccountId, customerPhone, null, "AI", aiAnswer);
 
                         // AI 首次完成后，若当前有在线坐席则按登录顺序分配，并推送完整历史
-                        agentDispatchService.assignIfAbsent(customerPhone).ifPresent(agentRowId -> {
+                        agentDispatchService.assignIfAbsent(customerPhone).ifPresentOrElse(agentRowId -> {
                             crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
                             agentPushService.pushHistory(agentRowId, customerPhone,
                                     chatHistoryService.listMessages(customerPhone));
+                        }, () -> {
+                            // 当前无在线坐席：标记为未分配客户，等待后续坐席登录时补分配
+                            agentDispatchService.markUnassigned(customerPhone);
                         });
                     });
                 });

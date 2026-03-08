@@ -1,7 +1,9 @@
 package com.example.aitmk.service.impl;
 
 import com.example.aitmk.config.CrmConfig;
+import com.example.aitmk.model.domain.AssignmentRecord;
 import com.example.aitmk.model.domain.CrmAgentAccount;
+import com.example.aitmk.model.domain.CrmChatRecord;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -11,13 +13,18 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 @Slf4j
 @Service
@@ -59,21 +66,11 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     @Override
     public Optional<CrmAgentAccount> verifyLogin(String username, String password) {
         try {
-            Map<String, Object> body = new HashMap<>();
-            body.put("appKey", crmConfig.getAppKey());
-            body.put("sign", crmConfig.getSign());
-            body.put("worksheetId", LOGIN_WORKSHEET_ID);
-            body.put("pageSize", 50);
-            body.put("pageIndex", 1);
-            body.put("listType", 0);
-            body.put("controls", List.of());
-
             List<Map<String, Object>> filters = new ArrayList<>();
             filters.add(filter(LOGIN_ACCOUNT_CONTROL_ID, username));
             filters.add(filter(LOGIN_PASSWORD_CONTROL_ID, password));
-            body.put("filters", filters);
 
-            JsonNode root = post("/api/v2/open/worksheet/getFilterRows", body);
+            JsonNode root = getFilterRows(LOGIN_WORKSHEET_ID, filters, 50);
             if (root == null || !root.path("success").asBoolean(false)) {
                 return Optional.empty();
             }
@@ -83,9 +80,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                 return Optional.empty();
             }
 
-            JsonNode first = root.path("data").path("rows").isArray() && root.path("data").path("rows").size() > 0
-                    ? root.path("data").path("rows").get(0)
-                    : null;
+            JsonNode first = firstRow(root);
             if (first == null) {
                 return Optional.empty();
             }
@@ -102,12 +97,40 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     @Override
-    public boolean addAgentLoginRecord(String agentAccountRowId, String status) {
+    public Optional<String> addAgentLoginRecord(String agentAccountRowId, String status) {
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId));
         controls.add(selectControl(AGENT_LOGIN_STATUS_CONTROL_ID, status));
         controls.add(control(AGENT_LOGIN_TIME_CONTROL_ID, now()));
-        return addRow(AGENT_LOGIN_WORKSHEET_ID, controls);
+
+        JsonNode root = addRow(AGENT_LOGIN_WORKSHEET_ID, controls);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return Optional.empty();
+        }
+        String rowId = root.path("data").asText("");
+        return rowId.isBlank() ? Optional.empty() : Optional.of(rowId);
+    }
+
+    @Override
+    public boolean updateAgentLoginStatus(String loginRecordRowId, String status) {
+        if (loginRecordRowId == null || loginRecordRowId.isBlank()) {
+            return false;
+        }
+
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(AGENT_LOGIN_STATUS_CONTROL_ID, status));
+        controls.add(control(AGENT_LOGIN_TIME_CONTROL_ID, now()));
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", AGENT_LOGIN_WORKSHEET_ID);
+        body.put("rowId", loginRecordRowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+
+        JsonNode root = post("/api/v2/open/worksheet/editRow", body);
+        return root != null && root.path("success").asBoolean(false);
     }
 
     @Override
@@ -118,7 +141,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         controls.add(control(ASSIGN_TIME_CONTROL_ID, now()));
         controls.add(control(ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID, now()));
         controls.add(selectControl(ASSIGN_SERVICE_STATUS_CONTROL_ID, serviceStatus));
-        return addRow(ASSIGNMENT_WORKSHEET_ID, controls);
+        JsonNode root = addRow(ASSIGNMENT_WORKSHEET_ID, controls);
+        return root != null && root.path("success").asBoolean(false);
     }
 
     @Override
@@ -136,27 +160,117 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         controls.add(selectControl(CHAT_SENDER_CONTROL_ID, sender));
         controls.add(control(CHAT_SEND_TIME_CONTROL_ID, now()));
         controls.add(control(CHAT_CONTENT_CONTROL_ID, message));
-        return addRow(CHAT_WORKSHEET_ID, controls);
+        JsonNode root = addRow(CHAT_WORKSHEET_ID, controls);
+        return root != null && root.path("success").asBoolean(false);
     }
 
-    private boolean addRow(String worksheetId, List<Map<String, Object>> controls) {
-        try {
-            Map<String, Object> body = new HashMap<>();
-            body.put("appKey", crmConfig.getAppKey());
-            body.put("sign", crmConfig.getSign());
-            body.put("worksheetId", worksheetId);
-            body.put("triggerWorkflow", true);
-            body.put("controls", controls);
-            if (crmConfig.getOwnerId() != null && !crmConfig.getOwnerId().isBlank()) {
-                controls.add(control("ownerid", crmConfig.getOwnerId()));
-            }
-
-            JsonNode root = post("/api/v2/open/worksheet/addRow", body);
-            return root != null && root.path("success").asBoolean(false);
-        } catch (Exception e) {
-            log.error("CRM addRow failed worksheetId={}", worksheetId, e);
-            return false;
+    @Override
+    public List<AssignmentRecord> listAssignments() {
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, List.of(), 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return List.of();
         }
+
+        List<AssignmentRecord> result = new ArrayList<>();
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray()) {
+            return List.of();
+        }
+
+        rows.forEach(row -> {
+            String customerPhone = extractAsText(row, ASSIGN_CUSTOMER_PHONE_CONTROL_ID);
+            String agent = extractAsText(row, ASSIGN_AGENT_CONTROL_ID);
+            if (!customerPhone.isBlank() && !agent.isBlank()) {
+                result.add(AssignmentRecord.builder().customerPhone(customerPhone).agentRowId(agent).build());
+            }
+        });
+        return result;
+    }
+
+    @Override
+    public List<CrmChatRecord> listChatRecords() {
+        JsonNode root = getFilterRows(CHAT_WORKSHEET_ID, List.of(), 1000);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return List.of();
+        }
+
+        List<CrmChatRecord> result = new ArrayList<>();
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray()) {
+            return List.of();
+        }
+
+        rows.forEach(row -> {
+            String customer = extractAsText(row, CHAT_CUSTOMER_PHONE_CONTROL_ID);
+            if (customer.isBlank()) {
+                return;
+            }
+            result.add(CrmChatRecord.builder()
+                    .businessAccountId(extractAsText(row, CHAT_BUSINESS_ACCOUNT_CONTROL_ID))
+                    .customerPhone(customer)
+                    .agentRowId(extractAsText(row, CHAT_AGENT_CONTROL_ID))
+                    .sender(normalizeSender(extractAsText(row, CHAT_SENDER_CONTROL_ID)))
+                    .content(extractAsText(row, CHAT_CONTENT_CONTROL_ID))
+                    .sendTime(parseCrmTime(extractAsText(row, CHAT_SEND_TIME_CONTROL_ID)))
+                    .build());
+        });
+
+        return result;
+    }
+
+    @Override
+    public Set<String> listOnlineAgents() {
+        List<Map<String, Object>> filters = List.of(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线"));
+        JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return Set.of();
+        }
+
+        Set<String> online = new HashSet<>();
+        JsonNode rows = root.path("data").path("rows");
+        if (rows.isArray()) {
+            rows.forEach(row -> {
+                String agentRowId = extractAsText(row, AGENT_LOGIN_ACCOUNT_CONTROL_ID);
+                if (!agentRowId.isBlank()) {
+                    online.add(agentRowId);
+                }
+            });
+        }
+        return online;
+    }
+
+    private JsonNode getFilterRows(String worksheetId, List<Map<String, Object>> filters, int pageSize) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("pageSize", pageSize);
+        body.put("pageIndex", 1);
+        body.put("listType", 0);
+        body.put("controls", List.of());
+        body.put("filters", filters);
+        return post("/api/v2/open/worksheet/getFilterRows", body);
+    }
+
+    private JsonNode addRow(String worksheetId, List<Map<String, Object>> controls) {
+        List<Map<String, Object>> allControls = new ArrayList<>(controls);
+        if (crmConfig.getOwnerId() != null && !crmConfig.getOwnerId().isBlank()) {
+            allControls.add(control("ownerid", crmConfig.getOwnerId()));
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", allControls);
+
+        return post("/api/v2/open/worksheet/addRow", body);
+    }
+
+    private JsonNode firstRow(JsonNode root) {
+        JsonNode rows = root.path("data").path("rows");
+        return rows.isArray() && rows.size() > 0 ? rows.get(0) : null;
     }
 
     private JsonNode post(String path, Object body) {
@@ -213,6 +327,40 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         if (node.isTextual()) {
             return node.asText();
         }
+        if (node.isArray() && !node.isEmpty()) {
+            JsonNode first = node.get(0);
+            if (first.has("sid")) {
+                return first.path("sid").asText("");
+            }
+            if (first.has("id")) {
+                return first.path("id").asText("");
+            }
+            if (first.has("name")) {
+                return first.path("name").asText("");
+            }
+            return first.toString();
+        }
         return node.toString();
+    }
+
+    private String normalizeSender(String sender) {
+        return switch (sender) {
+            case "客户" -> "customer";
+            case "AI" -> "ai";
+            case "人工" -> "agent";
+            default -> "system";
+        };
+    }
+
+    private Instant parseCrmTime(String text) {
+        if (text == null || text.isBlank()) {
+            return Instant.now();
+        }
+        try {
+            LocalDateTime dt = LocalDateTime.parse(text, CRM_TIME_FORMAT);
+            return dt.atZone(ZoneId.systemDefault()).toInstant();
+        } catch (DateTimeParseException e) {
+            return Instant.now();
+        }
     }
 }

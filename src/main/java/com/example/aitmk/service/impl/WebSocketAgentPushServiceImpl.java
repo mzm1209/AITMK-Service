@@ -8,7 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * WebSocket 推送实现。
@@ -20,6 +23,9 @@ public class WebSocketAgentPushServiceImpl implements AgentPushService {
 
     private final SimpMessagingTemplate messagingTemplate;
 
+    /** 推送失败缓存（按坐席分组）。 */
+    private final Map<String, List<AgentPushMessage>> failedBuffer = new ConcurrentHashMap<>();
+
     @Override
     public void pushHistory(String agentRowId, String customerPhone, List<ChatMessageRecord> messages) {
         AgentPushMessage payload = AgentPushMessage.builder()
@@ -28,7 +34,7 @@ public class WebSocketAgentPushServiceImpl implements AgentPushService {
                 .customerPhone(customerPhone)
                 .messages(messages)
                 .build();
-        messagingTemplate.convertAndSend("/topic/agent/" + agentRowId, payload);
+        safeSend(agentRowId, payload);
     }
 
     @Override
@@ -39,7 +45,31 @@ public class WebSocketAgentPushServiceImpl implements AgentPushService {
                 .customerPhone(customerPhone)
                 .messages(List.of(message))
                 .build();
-        messagingTemplate.convertAndSend("/topic/agent/" + agentRowId, payload);
-        log.debug("Push new customer message to agent={}, customer={}", agentRowId, customerPhone);
+        safeSend(agentRowId, payload);
+    }
+
+    @Override
+    public void resendFailed(String agentRowId) {
+        List<AgentPushMessage> pending = failedBuffer.getOrDefault(agentRowId, List.of());
+        if (pending.isEmpty()) {
+            return;
+        }
+
+        List<AgentPushMessage> copy = new ArrayList<>(pending);
+        failedBuffer.remove(agentRowId);
+        copy.forEach(msg -> safeSend(agentRowId, msg));
+    }
+
+    private void safeSend(String agentRowId, AgentPushMessage payload) {
+        try {
+            messagingTemplate.convertAndSend("/topic/agent/" + agentRowId, payload);
+        } catch (Exception e) {
+            log.error("WebSocket push failed, buffer message. agent={}, type={}", agentRowId, payload.getType(), e);
+            failedBuffer.compute(agentRowId, (k, v) -> {
+                List<AgentPushMessage> list = v == null ? new ArrayList<>() : new ArrayList<>(v);
+                list.add(payload);
+                return list;
+            });
+        }
     }
 }

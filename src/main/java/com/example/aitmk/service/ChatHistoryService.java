@@ -3,7 +3,10 @@ package com.example.aitmk.service;
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
 
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 /**
  * 聊天历史服务抽象：
@@ -25,4 +28,13 @@ public interface ChatHistoryService {
 
     /** 查询指定客户的消息明细。 */
     List<ChatMessageRecord> listMessages(String customerId);
+
+    /** 获取客户最后一条“客户发送”的消息时间。 */
+    Optional<Instant> lastCustomerMessageTime(String customerId);
+
+    /** 获取全量历史快照（用于同步/恢复）。 */
+    Map<String, List<ChatMessageRecord>> snapshot();
+
+    /** 用快照覆盖当前缓存。 */
+    void replaceAll(Map<String, List<ChatMessageRecord>> records);
 }

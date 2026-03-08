@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -70,6 +71,31 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
     public List<ChatMessageRecord> listMessages(String customerId) {
         List<ChatMessageRecord> messages = recordsByCustomer.getOrDefault(customerId, List.of());
         return new ArrayList<>(messages);
+    }
+
+    @Override
+    public Optional<Instant> lastCustomerMessageTime(String customerId) {
+        List<ChatMessageRecord> messages = recordsByCustomer.getOrDefault(customerId, List.of());
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessageRecord rec = messages.get(i);
+            if ("customer".equals(rec.getSender())) {
+                return Optional.ofNullable(rec.getTimestamp());
+            }
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    public Map<String, List<ChatMessageRecord>> snapshot() {
+        Map<String, List<ChatMessageRecord>> snapshot = new ConcurrentHashMap<>();
+        recordsByCustomer.forEach((k, v) -> snapshot.put(k, new ArrayList<>(v)));
+        return snapshot;
+    }
+
+    @Override
+    public void replaceAll(Map<String, List<ChatMessageRecord>> records) {
+        recordsByCustomer.clear();
+        records.forEach((k, v) -> recordsByCustomer.put(k, new ArrayList<>(v)));
     }
 
     /**

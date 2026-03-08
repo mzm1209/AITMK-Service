@@ -17,7 +17,10 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 聊天管理接口：提供客户列表、聊天记录查询与人工回复能力。
@@ -54,14 +57,24 @@ public class ChatController {
 
     /**
      * 发送人工回复，同时将该消息写入聊天历史，便于前端即时展示。
+     *
+     * 24 小时规则：若客户最后一次发送消息距离当前时间超过 24 小时，则禁止人工直接发送。
      */
     @PostMapping("/reply")
-    public ResponseEntity<Void> reply(@Valid @RequestBody ManualReplyRequest request) {
+    public ResponseEntity<?> reply(@Valid @RequestBody ManualReplyRequest request) {
+        Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
+        if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "客户最后一次回复已超过24小时，当前不允许直接人工回复"
+            ));
+        }
+
         sendMessageService.sendTextMessage(request.getFrom(), request.getCustomerId(), request.getMessage());
         chatHistoryService.recordManualReply(request.getCustomerId(), request.getMessage());
 
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", request.getMessage());
-        return ResponseEntity.ok().build();
+        return ResponseEntity.ok(Map.of("success", true));
     }
 }

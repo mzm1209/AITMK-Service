@@ -16,17 +16,24 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 1) 记录在线坐席
  * 2) 记录客户-坐席绑定
  * 3) 按登录顺序轮询分配
+ * 4) 维护未分配客户队列
  */
 @Service
 public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     private final Set<String> onlineAgents = new LinkedHashSet<>();
     private final Map<String, String> customerAgentMap = new ConcurrentHashMap<>();
+    private final Set<String> pendingCustomers = new LinkedHashSet<>();
     private final AtomicInteger roundRobinIndex = new AtomicInteger(0);
 
     @Override
     public synchronized void markOnline(String agentRowId) {
         onlineAgents.add(agentRowId);
+    }
+
+    @Override
+    public synchronized void markOffline(String agentRowId) {
+        onlineAgents.remove(agentRowId);
     }
 
     @Override
@@ -43,9 +50,11 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     public synchronized Optional<String> assignIfAbsent(String customerPhone) {
         String existing = customerAgentMap.get(customerPhone);
         if (existing != null) {
+            pendingCustomers.remove(customerPhone);
             return Optional.of(existing);
         }
         if (onlineAgents.isEmpty()) {
+            pendingCustomers.add(customerPhone);
             return Optional.empty();
         }
 
@@ -53,6 +62,46 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         int idx = Math.floorMod(roundRobinIndex.getAndIncrement(), queue.size());
         String selected = queue.get(idx);
         customerAgentMap.put(customerPhone, selected);
+        pendingCustomers.remove(customerPhone);
         return Optional.of(selected);
+    }
+
+    @Override
+    public synchronized void markUnassigned(String customerPhone) {
+        if (!customerAgentMap.containsKey(customerPhone)) {
+            pendingCustomers.add(customerPhone);
+        }
+    }
+
+    @Override
+    public synchronized Optional<String> assignOnePendingCustomerToAgent(String agentRowId) {
+        if (pendingCustomers.isEmpty()) {
+            return Optional.empty();
+        }
+        String customer = pendingCustomers.iterator().next();
+        pendingCustomers.remove(customer);
+        customerAgentMap.put(customer, agentRowId);
+        return Optional.of(customer);
+    }
+
+    @Override
+    public synchronized Set<String> onlineAgentsSnapshot() {
+        return new LinkedHashSet<>(onlineAgents);
+    }
+
+    @Override
+    public synchronized Map<String, String> assignmentsSnapshot() {
+        return new ConcurrentHashMap<>(customerAgentMap);
+    }
+
+    @Override
+    public synchronized void replaceState(Set<String> onlineAgents, Map<String, String> assignments) {
+        this.onlineAgents.clear();
+        this.onlineAgents.addAll(onlineAgents);
+
+        this.customerAgentMap.clear();
+        this.customerAgentMap.putAll(assignments);
+
+        this.pendingCustomers.clear();
     }
 }
