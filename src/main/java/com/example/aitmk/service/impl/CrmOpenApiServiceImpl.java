@@ -37,7 +37,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String LOGIN_RELATED_USER_CONTROL_ID = "69abacc3433ec9f4b5e6ce26";
 
     private static final String AGENT_LOGIN_WORKSHEET_ID = "zxzt";
-    private static final String AGENT_LOGIN_ACCOUNT_CONTROL_ID = "69abbb3e433ec9f4b5e6d083";
+    private static final String AGENT_LOGIN_ACCOUNT_CONTROL_ID = "69aea988433ec9f4b5e70086";
     private static final String AGENT_LOGIN_STATUS_CONTROL_ID = "69abbb3e433ec9f4b5e6d085";
     private static final String AGENT_LOGIN_TIME_CONTROL_ID = "69abbb3e433ec9f4b5e6d086";
 
