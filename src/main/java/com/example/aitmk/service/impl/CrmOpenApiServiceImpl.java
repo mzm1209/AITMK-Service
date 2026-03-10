@@ -99,7 +99,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     @Override
     public Optional<String> findOnlineLoginRecordRowId(String agentAccountRowId) {
         List<Map<String, Object>> filters = new ArrayList<>();
-        filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,2));
+        filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,24));
         filters.add(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
 
         JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 1);
