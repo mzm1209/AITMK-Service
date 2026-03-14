@@ -3,6 +3,7 @@ package com.example.aitmk.controller;
 import com.example.aitmk.model.domain.AgentCustomerView;
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
+import com.example.aitmk.model.domain.ManualMediaReplyRequest;
 import com.example.aitmk.model.domain.ManualReplyRequest;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ChatHistoryService;
@@ -100,5 +101,52 @@ public class ChatController {
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", request.getMessage());
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    /**
+     * 发送人工媒体消息（图片/视频/音频/文件），并写入本地与 CRM 聊天记录。
+     */
+    @PostMapping("/reply/media")
+    public ResponseEntity<?> mediaReply(@Valid @RequestBody ManualMediaReplyRequest request) {
+        Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
+        if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "客户最后一次回复已超过24小时，当前不允许直接人工回复"
+            ));
+        }
+
+        String mediaType = request.getMediaType().trim().toLowerCase();
+        switch (mediaType) {
+            case "image" -> sendMessageService.sendImageMessage(request.getFrom(), request.getCustomerId(), request.getMediaUrl(), request.getCaption());
+            case "video" -> sendMessageService.sendVideoMessage(request.getFrom(), request.getCustomerId(), request.getMediaUrl(), request.getCaption());
+            case "audio" -> sendMessageService.sendAudioMessage(request.getFrom(), request.getCustomerId(), request.getMediaUrl());
+            case "document" -> sendMessageService.sendDocumentMessage(request.getFrom(), request.getCustomerId(), request.getMediaUrl(), request.getFilename(), request.getCaption());
+            default -> {
+                return ResponseEntity.badRequest().body(Map.of(
+                        "success", false,
+                        "message", "mediaType 仅支持 image/video/audio/document"
+                ));
+            }
+        }
+
+        String recordMessage = buildMediaRecordMessage(request);
+        chatHistoryService.recordManualReply(request.getCustomerId(), recordMessage);
+
+        String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
+        crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", recordMessage);
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    private String buildMediaRecordMessage(ManualMediaReplyRequest request) {
+        String mediaType = request.getMediaType() == null ? "media" : request.getMediaType().trim().toLowerCase();
+        StringBuilder sb = new StringBuilder("[" + mediaType + "] ").append(request.getMediaUrl());
+        if (request.getFilename() != null && !request.getFilename().isBlank()) {
+            sb.append(" (filename=").append(request.getFilename()).append(")");
+        }
+        if (request.getCaption() != null && !request.getCaption().isBlank()) {
+            sb.append(" caption=").append(request.getCaption());
+        }
+        return sb.toString();
     }
 }

@@ -22,5 +22,18 @@ public interface SendMessageService {
      */
     void sendImageMessage(String from ,String to, String imageUrl, String caption);
 
-    // 可扩展：视频、文档、模板消息等
+    /**
+     * 发送视频消息。
+     */
+    void sendVideoMessage(String from, String to, String videoUrl, String caption);
+
+    /**
+     * 发送音频消息。
+     */
+    void sendAudioMessage(String from, String to, String audioUrl);
+
+    /**
+     * 发送文件消息。
+     */
+    void sendDocumentMessage(String from, String to, String documentUrl, String filename, String caption);
 }
