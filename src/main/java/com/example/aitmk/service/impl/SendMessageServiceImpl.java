@@ -17,6 +17,7 @@ import org.springframework.web.reactive.function.client.WebClientResponseExcepti
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 @Slf4j
@@ -33,15 +34,16 @@ public class SendMessageServiceImpl implements SendMessageService {
     @Override
     public String uploadMedia(String from, String mediaType, MultipartFile file) {
         String normalizedType = normalizeMediaType(mediaType);
+        String resolvedMimeType = resolveMimeType(normalizedType, file);
         String url = config.getGraphUrl() + "/" + from + "/media";
 
         try {
             MultipartBodyBuilder builder = new MultipartBodyBuilder();
             builder.part("messaging_product", "whatsapp");
-            builder.part("type", resolveMimeType(normalizedType, file));
+            builder.part("type", resolvedMimeType);
             builder.part("file", file.getBytes())
                     .filename(file.getOriginalFilename() == null ? "upload.bin" : file.getOriginalFilename())
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM);
+                    .contentType(MediaType.parseMediaType(resolvedMimeType));
 
             String response = webClient.post()
                     .uri(url)
@@ -57,7 +59,7 @@ public class SendMessageServiceImpl implements SendMessageService {
             if (!StringUtils.hasText(mediaId)) {
                 throw new IllegalStateException("Meta 上传成功但未返回 mediaId: " + response);
             }
-            log.info("WhatsApp uploadMedia success, type={}, mediaId={}", normalizedType, mediaId);
+            log.info("WhatsApp uploadMedia success, type={}, mime={}, mediaId={}", normalizedType, resolvedMimeType, mediaId);
             return mediaId;
         } catch (WebClientResponseException e) {
             log.error("WhatsApp uploadMedia error, status={}, body={}", e.getStatusCode(), e.getResponseBodyAsString(), e);
@@ -150,15 +152,51 @@ public class SendMessageServiceImpl implements SendMessageService {
 
     private String resolveMimeType(String mediaType, MultipartFile file) {
         String contentType = file.getContentType();
-        if (StringUtils.hasText(contentType)) {
-            return contentType;
+        if (StringUtils.hasText(contentType) && !MediaType.APPLICATION_OCTET_STREAM_VALUE.equalsIgnoreCase(contentType.trim())) {
+            return contentType.trim();
         }
+
+        String filename = file.getOriginalFilename();
+        String byFilename = resolveMimeTypeByFilename(filename);
+        if (StringUtils.hasText(byFilename)) {
+            return byFilename;
+        }
+
         return switch (mediaType) {
             case "image" -> "image/jpeg";
             case "video" -> "video/mp4";
             case "audio" -> "audio/mpeg";
-            case "document" -> "application/octet-stream";
-            default -> "application/octet-stream";
+            case "document" -> "application/pdf";
+            default -> "application/pdf";
+        };
+    }
+
+    private String resolveMimeTypeByFilename(String filename) {
+        if (!StringUtils.hasText(filename) || !filename.contains(".")) {
+            return null;
+        }
+        String ext = filename.substring(filename.lastIndexOf('.') + 1).toLowerCase(Locale.ROOT);
+        return switch (ext) {
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "png" -> "image/png";
+            case "webp" -> "image/webp";
+            case "mp4" -> "video/mp4";
+            case "3gp", "3gpp" -> "video/3gpp";
+            case "aac" -> "audio/aac";
+            case "m4a" -> "audio/mp4";
+            case "mp3" -> "audio/mpeg";
+            case "amr" -> "audio/amr";
+            case "ogg" -> "audio/ogg";
+            case "opus" -> "audio/opus";
+            case "pdf" -> "application/pdf";
+            case "txt" -> "text/plain";
+            case "doc" -> "application/msword";
+            case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "xls" -> "application/vnd.ms-excel";
+            case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            case "ppt" -> "application/vnd.ms-powerpoint";
+            case "pptx" -> "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+            default -> null;
         };
     }
 
