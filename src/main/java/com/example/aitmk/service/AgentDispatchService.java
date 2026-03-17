@@ -18,6 +18,11 @@ public interface AgentDispatchService {
 
     void markUnassigned(String customerPhone);
 
+    /**
+     * 释放指定客户当前本地分配关系（如会话超时关闭后）。
+     */
+    void unassignCustomer(String customerPhone);
+
     Optional<String> assignOnePendingCustomerToAgent(String agentRowId);
 
     Set<String> onlineAgentsSnapshot();

@@ -166,6 +166,57 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     @Override
+    public boolean closeServingAssignment(String customerPhone) {
+        List<Map<String, Object>> filters = List.of(
+                filter(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(ASSIGN_SERVICE_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, filters, 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) {
+            return false;
+        }
+
+        JsonNode target = null;
+        Instant latest = Instant.EPOCH;
+        for (JsonNode row : rows) {
+            Instant t = parseCrmTime(extractAsText(row, ASSIGN_TIME_CONTROL_ID));
+            if (target == null || t.isAfter(latest)) {
+                target = row;
+                latest = t;
+            }
+        }
+
+        if (target == null) {
+            return false;
+        }
+
+        String rowId = target.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(ASSIGN_SERVICE_STATUS_CONTROL_ID, "已关闭"));
+        controls.add(control(ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID, now()));
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", ASSIGNMENT_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
+    }
+
+    @Override
     public boolean addChatRecord(String businessAccountId,
                                  String customerPhone,
                                  String agentAccountRowId,

@@ -81,6 +81,14 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         }
     }
 
+
+    @Override
+    public synchronized void unassignCustomer(String customerPhone) {
+        if (customerAgentMap.remove(customerPhone) != null) {
+            log.info("Customer unassigned from local map. customer={}, assignedCount={}", customerPhone, customerAgentMap.size());
+        }
+    }
+
     @Override
     public synchronized Optional<String> assignOnePendingCustomerToAgent(String agentRowId) {
         if (pendingCustomers.isEmpty()) {
