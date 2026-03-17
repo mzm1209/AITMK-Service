@@ -17,6 +17,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.Instant;
 
@@ -72,23 +73,30 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message) {
         try {
             WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
-            String customerPhone = parsed.getFrom();
-            String customerText = parsed.getText() == null ? "" : parsed.getText();
+            String rawCustomerPhone = parsed.getFrom();
+            String customerPhone = normalizeCustomerPhone(rawCustomerPhone);
+            String customerContent = buildCustomerContent(parsed);
 
-            if (customerPhone == null || customerPhone.isBlank()) {
-                log.warn("Skip message because customer phone is blank");
+            if (!StringUtils.hasText(customerPhone)) {
+                log.warn("Skip message because customer phone is blank. rawPhone={}", rawCustomerPhone);
                 return;
             }
 
+            log.info("Webhook message received. rawPhone={}, normalizedPhone={}, type={}, hasText={}",
+                    rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()));
+
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
-            chatHistoryService.recordCustomerMessage(customerPhone, customerText);
-            log.info("Local history recorded for customer message. customer={}", customerPhone);
+            chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
+            log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
 
-            String assignedAgent = agentDispatchService.getAssignedAgent(customerPhone).orElse(null);
+            String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
 
-            // 2) CRM记录失败不影响主流程
+            // 2) CRM记录失败不影响主流程（但必须有明确日志）
             try {
-                crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerText);
+                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerContent);
+                if (!crmOk) {
+                    log.warn("CRM add customer chat record returned false. customer={}, assignedAgent={}", customerPhone, assignedAgent);
+                }
             } catch (Exception ex) {
                 log.error("CRM add customer chat record failed. customer={}", customerPhone, ex);
             }
@@ -96,11 +104,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             ChatMessageRecord customerRecord = ChatMessageRecord.builder()
                     .customerId(customerPhone)
                     .sender("customer")
-                    .message(customerText)
+                    .message(customerContent)
                     .timestamp(Instant.now())
                     .build();
 
-            if (assignedAgent != null && !assignedAgent.isBlank()) {
+            if (StringUtils.hasText(assignedAgent)) {
                 // 已有坐席接待：停止 AI 自动回复，仅推送给坐席
                 try {
                     agentPushService.pushNewMessage(assignedAgent, customerPhone, customerRecord);
@@ -118,9 +126,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.info("Customer marked pending because no online agent. customer={}", customerPhone);
             }
 
-            // 4) AI流程（失败不影响本地缓存）
+            // 4) 未分配客户走 AI流程（失败不影响本地缓存）
             try {
-                String aiReplyJson = aiService.chat(customerText);
+                String aiReplyJson = aiService.chat(customerContent);
                 String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
 
                 chatHistoryService.recordAiReply(customerPhone, aiAnswer);
@@ -129,7 +137,10 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
 
                 try {
-                    crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
+                    boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
+                    if (!crmOk) {
+                        log.warn("CRM add AI chat record returned false. customer={}", customerPhone);
+                    }
                 } catch (Exception ex) {
                     log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
                 }
@@ -142,7 +153,10 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 agentDispatchService.assignIfAbsent(customerPhone).ifPresentOrElse(agentRowId -> {
                     log.info("Customer assigned locally. customer={}, agent={}", customerPhone, agentRowId);
                     try {
-                        crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        if (!crmOk) {
+                            log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
+                        }
                     } catch (Exception ex) {
                         log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }
@@ -154,7 +168,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         log.error("Push history to agent failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }
                 }, () -> {
-                    // 理论上 hasOnlineAgent=true 时不会进入，但这里兜底保证本地队列正确
                     agentDispatchService.markUnassigned(customerPhone);
                     log.warn("Assign failed unexpectedly, fallback mark pending. customer={}", customerPhone);
                 });
@@ -162,5 +175,43 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);
         }
+    }
+
+    private String lookupAssignedAgent(String rawCustomerPhone, String normalizedCustomerPhone) {
+        if (StringUtils.hasText(rawCustomerPhone)) {
+            String fromRaw = agentDispatchService.getAssignedAgent(rawCustomerPhone.trim()).orElse(null);
+            if (StringUtils.hasText(fromRaw)) {
+                return fromRaw;
+            }
+        }
+        return agentDispatchService.getAssignedAgent(normalizedCustomerPhone).orElse(null);
+    }
+
+    private String normalizeCustomerPhone(String rawPhone) {
+        if (!StringUtils.hasText(rawPhone)) {
+            return "";
+        }
+        return rawPhone.replaceAll("[^0-9]", "");
+    }
+
+    private String buildCustomerContent(WhatsAppMessage parsed) {
+        if (StringUtils.hasText(parsed.getText())) {
+            return parsed.getText().trim();
+        }
+
+        String type = StringUtils.hasText(parsed.getType()) ? parsed.getType().trim().toLowerCase() : "unknown";
+        StringBuilder sb = new StringBuilder("[").append(type).append("]");
+
+        if (StringUtils.hasText(parsed.getMediaId())) {
+            sb.append(" mediaId=").append(parsed.getMediaId());
+        }
+        if (StringUtils.hasText(parsed.getMediaUrl())) {
+            sb.append(" url=").append(parsed.getMediaUrl());
+        }
+        if ("location".equals(type) && parsed.getLatitude() != null && parsed.getLongitude() != null) {
+            sb.append(" lat=").append(parsed.getLatitude()).append(" lng=").append(parsed.getLongitude());
+        }
+
+        return sb.toString();
     }
 }
