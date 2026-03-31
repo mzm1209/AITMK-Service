@@ -235,6 +235,76 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         return root != null && root.path("success").asBoolean(false);
     }
 
+
+    @Override
+    public JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank()) {
+            return null;
+        }
+        List<Map<String, Object>> allControls = new ArrayList<>(controls == null ? List.of() : controls);
+        if (crmConfig.getOwnerId() != null && !crmConfig.getOwnerId().isBlank()) {
+            allControls.add(control("ownerid", crmConfig.getOwnerId()));
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        body.put("controls", allControls);
+        return post("/api/v2/open/worksheet/addRow", body);
+    }
+
+    @Override
+    public JsonNode frontendGetFilterRows(String worksheetId,
+                                          List<Map<String, Object>> filters,
+                                          int pageSize,
+                                          int pageIndex,
+                                          int listType,
+                                          List<Map<String, Object>> sortControls) {
+        if (worksheetId == null || worksheetId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("pageSize", pageSize <= 0 ? 50 : pageSize);
+        body.put("pageIndex", pageIndex <= 0 ? 1 : pageIndex);
+        body.put("listType", listType);
+        body.put("controls", sortControls == null ? List.of() : sortControls);
+        body.put("filters", filters == null ? List.of() : filters);
+        return post("/api/v2/open/worksheet/getFilterRows", body);
+    }
+
+    @Override
+    public JsonNode frontendEditRow(String worksheetId, String rowId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        body.put("controls", controls == null ? List.of() : controls);
+        return post("/api/v2/open/worksheet/editRow", body);
+    }
+
+    @Override
+    public JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        return post("/api/v2/open/worksheet/deleteRow", body);
+    }
+
     @Override
     public List<AssignmentRecord> listAssignments() {
         JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID,
