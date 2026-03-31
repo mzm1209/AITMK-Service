@@ -109,6 +109,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
             chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
+            agentDispatchService.markCustomerMessageAt(customerPhone);
             log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
 
             // 2) CRM记录失败不影响主流程（但必须有明确日志）
@@ -145,6 +146,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 agentDispatchService.markUnassigned(customerPhone);
                 log.info("Customer marked pending because no online agent. customer={}", customerPhone);
             }
+            try {
+                crmOpenApiService.openAiReception(customerPhone, hasOnlineAgent ? "首次会话" : "非工作日");
+            } catch (Exception ex) {
+                log.warn("Open AI reception failed. customer={}", customerPhone, ex);
+            }
 
             // 4) 未分配客户走 AI流程（失败不影响本地缓存）
             try {
@@ -177,6 +183,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         if (!crmOk) {
                             log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
                         }
+                        crmOpenApiService.closeAiReception(customerPhone);
                     } catch (Exception ex) {
                         log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }

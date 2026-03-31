@@ -128,6 +128,7 @@ public class ChatController {
 
         sendMessageService.sendTextMessage(request.getFrom(), request.getCustomerId(), request.getMessage());
         chatHistoryService.recordManualReply(request.getCustomerId(), request.getMessage());
+        agentDispatchService.markAgentReplied(request.getCustomerId());
 
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", request.getMessage());
@@ -177,6 +178,7 @@ public class ChatController {
 
         String recordMessage = buildMediaRecordMessage(request);
         chatHistoryService.recordManualReply(request.getCustomerId(), recordMessage);
+        agentDispatchService.markAgentReplied(request.getCustomerId());
 
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", recordMessage);

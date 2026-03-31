@@ -55,6 +55,12 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String CHAT_SENDER_CONTROL_ID = "69abbfff433ec9f4b5e6d226";
     private static final String CHAT_SEND_TIME_CONTROL_ID = "69abbfff433ec9f4b5e6d227";
     private static final String CHAT_CONTENT_CONTROL_ID = "69abbfff433ec9f4b5e6d228";
+    private static final String AI_POOL_WORKSHEET_ID = "aijdc";
+    private static final String AI_POOL_CUSTOMER_PHONE_CONTROL_ID = "69cb3e3b433ec9f4b5e80433";
+    private static final String AI_POOL_ASSIGN_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80476";
+    private static final String AI_POOL_REASON_CONTROL_ID = "69cb3ff3433ec9f4b5e80477";
+    private static final String AI_POOL_STATUS_CONTROL_ID = "69cb3ff3433ec9f4b5e80478";
+    private static final String AI_POOL_TRANSFER_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80479";
 
     private static final DateTimeFormatter CRM_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-M-d HH:mm:ss");
 
@@ -233,6 +239,55 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         controls.add(control(CHAT_CONTENT_CONTROL_ID, message));
         JsonNode root = addRow(CHAT_WORKSHEET_ID, controls);
         return root != null && root.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean openAiReception(String customerPhone, String reason) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(control(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
+        controls.add(control(AI_POOL_ASSIGN_TIME_CONTROL_ID, now()));
+        controls.add(selectControl(AI_POOL_REASON_CONTROL_ID, reason == null || reason.isBlank() ? "首次会话" : reason));
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "服务中"));
+        JsonNode root = addRow(AI_POOL_WORKSHEET_ID, controls);
+        return root != null && root.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean closeAiReception(String customerPhone) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(AI_POOL_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(AI_POOL_WORKSHEET_ID, filters, 1);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+        JsonNode row = firstRow(root);
+        if (row == null) {
+            return false;
+        }
+        String rowId = row.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "已关闭"));
+        controls.add(control(AI_POOL_TRANSFER_TIME_CONTROL_ID, now()));
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", AI_POOL_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
     }
 
 

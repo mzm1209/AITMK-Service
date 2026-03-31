@@ -36,6 +36,12 @@ public interface CrmOpenApiService {
                           String sender,
                           String message);
 
+    /** 写入 AI 接待池（服务中）。 */
+    boolean openAiReception(String customerPhone, String reason);
+
+    /** 将 AI 接待池中的服务状态更新为已关闭。 */
+    boolean closeAiReception(String customerPhone);
+
 
     /**
      * 面向IM前端的CRM通用新增接口。
