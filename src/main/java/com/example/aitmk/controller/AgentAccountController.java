@@ -34,6 +34,7 @@ public class AgentAccountController {
     private static final String LOGIN_ACCOUNT_CONTROL_ID = "69abab83433ec9f4b5e6ce0e";
     private static final String LOGIN_PASSWORD_CONTROL_ID = "69abacc3433ec9f4b5e6ce25";
     private static final String LOGIN_RELATED_USER_CONTROL_ID = "69abacc3433ec9f4b5e6ce26";
+    private static final String LOGIN_AGENT_LEVEL_CONTROL_ID = "69ca5415433ec9f4b5e7fced";
 
     private final CrmOpenApiService crmOpenApiService;
 
@@ -106,6 +107,10 @@ public class AgentAccountController {
         }
         if (StringUtils.hasText(request.getRelatedUserIds())) {
             controls.add(control(LOGIN_RELATED_USER_CONTROL_ID, request.getRelatedUserIds()));
+        }
+        if (request.getAgentLevel() != null) {
+            // 关联记录字段（dataType=29）按字符串逗号分隔 rowId，全量覆盖
+            controls.add(control(LOGIN_AGENT_LEVEL_CONTROL_ID, request.getAgentLevel()));
         }
         return controls;
     }
