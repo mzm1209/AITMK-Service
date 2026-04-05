@@ -63,7 +63,10 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     }
 
                     String finalBusinessAccountId = businessAccountId;
-                    change.getValue().getMessages().forEach(message -> processOneMessage(finalBusinessAccountId, message));
+                    change.getValue().getMessages().forEach(message -> {
+                        String contactName = resolveContactName(change.getValue(), message == null ? null : message.getFrom());
+                        processOneMessage(finalBusinessAccountId, message, contactName);
+                    });
                 });
             });
         } catch (Exception e) {
@@ -71,7 +74,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
-    private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message) {
+    private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message, String contactName) {
         try {
             WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
             String rawCustomerPhone = parsed.getFrom();
@@ -108,6 +111,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
+            chatHistoryService.setCustomerNickname(customerPhone, contactName);
             chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
             agentDispatchService.markCustomerMessageAt(customerPhone);
             log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
@@ -219,6 +223,26 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             return "";
         }
         return rawPhone.replaceAll("[^0-9]", "");
+    }
+
+    private String resolveContactName(com.example.aitmk.model.webhook.WhatsAppValue value, String from) {
+        if (value == null || value.getContacts() == null || value.getContacts().isEmpty()) {
+            return "";
+        }
+        String normalizedFrom = normalizeCustomerPhone(from);
+        for (com.example.aitmk.model.webhook.WhatsAppValue.Contact contact : value.getContacts()) {
+            if (contact == null) {
+                continue;
+            }
+            String waId = normalizeCustomerPhone(contact.getWa_id());
+            if (StringUtils.hasText(normalizedFrom) && !normalizedFrom.equals(waId)) {
+                continue;
+            }
+            if (contact.getProfile() != null && StringUtils.hasText(contact.getProfile().getName())) {
+                return contact.getProfile().getName().trim();
+            }
+        }
+        return "";
     }
 
     private String buildCustomerContent(WhatsAppMessage parsed) {

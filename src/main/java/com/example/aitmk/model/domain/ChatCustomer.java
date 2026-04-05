@@ -14,6 +14,8 @@ public class ChatCustomer {
 
     /** 客户唯一标识（当前使用手机号/WhatsApp ID）。 */
     private String customerId;
+    /** 客户昵称（来自 WhatsApp 联系人 profile.name）。 */
+    private String customerNickname;
     /** 最近一条消息内容。 */
     private String lastMessage;
     /** 最近一条消息时间。 */

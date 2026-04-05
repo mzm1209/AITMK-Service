@@ -25,10 +25,22 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
      * 使用 ConcurrentHashMap 保证并发读写安全。
      */
     private final Map<String, List<ChatMessageRecord>> recordsByCustomer = new ConcurrentHashMap<>();
+    private final Map<String, String> nicknameByCustomer = new ConcurrentHashMap<>();
 
     @Override
     public void recordCustomerMessage(String customerId, String message) {
         append(customerId, "customer", message);
+    }
+
+    @Override
+    public void setCustomerNickname(String customerId, String nickname) {
+        if (customerId == null || customerId.isBlank()) {
+            return;
+        }
+        if (nickname == null || nickname.isBlank()) {
+            return;
+        }
+        nicknameByCustomer.put(customerId, nickname.trim());
     }
 
     @Override
@@ -55,6 +67,7 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                     ChatMessageRecord latest = history.get(history.size() - 1);
                     return ChatCustomer.builder()
                             .customerId(entry.getKey())
+                            .customerNickname(nicknameByCustomer.getOrDefault(entry.getKey(), ""))
                             .lastMessage(latest.getMessage())
                             .lastMessageAt(latest.getTimestamp())
                             .build();
@@ -96,6 +109,7 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
     public void replaceAll(Map<String, List<ChatMessageRecord>> records) {
         recordsByCustomer.clear();
         records.forEach((k, v) -> recordsByCustomer.put(k, new ArrayList<>(v)));
+        nicknameByCustomer.clear();
     }
 
     /**

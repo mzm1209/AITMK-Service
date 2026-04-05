@@ -17,6 +17,9 @@ public interface ChatHistoryService {
     /** 记录客户发来的消息。 */
     void recordCustomerMessage(String customerId, String message);
 
+    /** 更新客户昵称。 */
+    void setCustomerNickname(String customerId, String nickname);
+
     /** 记录 AI 自动回复消息。 */
     void recordAiReply(String customerId, String message);
 
