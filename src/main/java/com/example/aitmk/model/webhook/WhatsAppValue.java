@@ -1,6 +1,7 @@
 package com.example.aitmk.model.webhook;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
 import java.util.List;
 
@@ -39,7 +40,9 @@ public class WhatsAppValue {
         private String status;
         private String timestamp;
         private String recipient_id;
-        private String conversation;
-        private String pricing;
+        /** 兼容对象结构：{id,origin,expiration_timestamp,...} */
+        private JsonNode conversation;
+        /** 兼容对象结构：{billable,pricing_model,category,...} */
+        private JsonNode pricing;
     }
 }
