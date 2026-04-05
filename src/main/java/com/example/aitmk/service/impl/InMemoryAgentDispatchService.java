@@ -43,17 +43,25 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     @Override
     public synchronized void markOnline(String agentRowId) {
-        onlineAgents.add(agentRowId);
-        log.info("Agent online. agent={}, onlineCount={}", agentRowId, onlineAgents.size());
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return;
+        }
+        onlineAgents.add(normalizedAgentId);
+        log.info("Agent online. agent={}, onlineCount={}", normalizedAgentId, onlineAgents.size());
     }
 
     @Override
     public synchronized void markOffline(String agentRowId) {
-        onlineAgents.remove(agentRowId);
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return;
+        }
+        onlineAgents.remove(normalizedAgentId);
         // 坐席下线时释放其负责会话，进入待分配队列（AI兜底逻辑由上层编排）
         Set<String> released = new HashSet<>();
         customerAgentMap.forEach((customer, agent) -> {
-            if (agentRowId.equals(agent)) {
+            if (normalizedAgentId.equals(normalizeAgentId(agent))) {
                 released.add(customer);
             }
         });
@@ -61,7 +69,7 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
             customerAgentMap.remove(customer);
             pendingCustomers.add(customer);
         });
-        log.info("Agent offline. agent={}, onlineCount={}", agentRowId, onlineAgents.size());
+        log.info("Agent offline. agent={}, onlineCount={}", normalizedAgentId, onlineAgents.size());
     }
 
     @Override
@@ -120,14 +128,18 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     @Override
     public synchronized Optional<String> assignOnePendingCustomerToAgent(String agentRowId) {
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return Optional.empty();
+        }
         if (pendingCustomers.isEmpty()) {
             return Optional.empty();
         }
         String customer = pendingCustomers.iterator().next();
         pendingCustomers.remove(customer);
-        customerAgentMap.put(customer, agentRowId);
+        customerAgentMap.put(customer, normalizedAgentId);
         log.info("Assign pending customer to newly online agent. customer={}, agent={}, pendingCount={}",
-                customer, agentRowId, pendingCustomers.size());
+                customer, normalizedAgentId, pendingCustomers.size());
         return Optional.of(customer);
     }
 
@@ -144,10 +156,24 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     @Override
     public synchronized void replaceState(Set<String> onlineAgents, Map<String, String> assignments) {
         this.onlineAgents.clear();
-        this.onlineAgents.addAll(onlineAgents);
+        if (onlineAgents != null) {
+            onlineAgents.forEach(agent -> {
+                String normalized = normalizeAgentId(agent);
+                if (normalized != null && !normalized.isBlank()) {
+                    this.onlineAgents.add(normalized);
+                }
+            });
+        }
 
         this.customerAgentMap.clear();
-        this.customerAgentMap.putAll(assignments);
+        if (assignments != null) {
+            assignments.forEach((customer, agent) -> {
+                String normalized = normalizeAgentId(agent);
+                if (normalized != null && !normalized.isBlank()) {
+                    this.customerAgentMap.put(customer, normalized);
+                }
+            });
+        }
 
         this.pendingCustomers.clear();
         this.warnedCustomers.clear();
@@ -157,13 +183,14 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     @Override
     public void setAgentProfile(String agentRowId, String level, double weight, int maxLoad) {
-        if (agentRowId == null || agentRowId.isBlank()) {
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
             return;
         }
         String normalizedLevel = normalizeLevel(level);
         int normalizedMaxLoad = Math.max(maxLoad, 1);
         double normalizedWeight = weight <= 0 ? 1.0d : weight;
-        agentProfiles.put(agentRowId, new AgentProfile(normalizedLevel, normalizedWeight, normalizedMaxLoad));
+        agentProfiles.put(normalizedAgentId, new AgentProfile(normalizedLevel, normalizedWeight, normalizedMaxLoad));
     }
 
     @Override
@@ -292,7 +319,7 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     }
 
     private AgentProfile profileOf(String agent) {
-        return agentProfiles.getOrDefault(agent, new AgentProfile("中级", 1.0d, 8));
+        return agentProfiles.getOrDefault(normalizeAgentId(agent), new AgentProfile("中级", 1.0d, 8));
     }
 
     private double defaultLevelFactor(String level) {
@@ -312,6 +339,40 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
             return v;
         }
         return "中级";
+    }
+
+    /**
+     * 兼容 rowId 与关联字段 JSON 文本（如 [{"sid":"..."}]）两种坐席 ID 形态。
+     */
+    private String normalizeAgentId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        String text = raw.trim();
+        if (!(text.startsWith("[") || text.startsWith("{"))) {
+            return text;
+        }
+        try {
+            int sidIdx = text.indexOf("\"sid\"");
+            if (sidIdx >= 0) {
+                int start = text.indexOf('"', text.indexOf(':', sidIdx) + 1) + 1;
+                int end = text.indexOf('"', start);
+                if (start > 0 && end > start) {
+                    return text.substring(start, end);
+                }
+            }
+            int rowIdIdx = text.indexOf("\"rowid\"");
+            if (rowIdIdx >= 0) {
+                int start = text.indexOf('"', text.indexOf(':', rowIdIdx) + 1) + 1;
+                int end = text.indexOf('"', start);
+                if (start > 0 && end > start) {
+                    return text.substring(start, end);
+                }
+            }
+        } catch (Exception ignore) {
+            return text;
+        }
+        return text;
     }
 
     private record AgentProfile(String level, double weight, int maxLoad) {}
