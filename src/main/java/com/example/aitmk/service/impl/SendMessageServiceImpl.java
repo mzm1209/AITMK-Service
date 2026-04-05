@@ -36,6 +36,8 @@ public class SendMessageServiceImpl implements SendMessageService {
         String normalizedType = normalizeMediaType(mediaType);
         String resolvedMimeType = resolveMimeType(normalizedType, file);
         String url = config.getGraphUrl() + "/" + from + "/media";
+        log.info("WhatsApp uploadMedia request. from={}, mediaType={}, mime={}, filename={}, url={}",
+                from, normalizedType, resolvedMimeType, file.getOriginalFilename(), url);
 
         try {
             MultipartBodyBuilder builder = new MultipartBodyBuilder();
@@ -202,6 +204,7 @@ public class SendMessageServiceImpl implements SendMessageService {
 
     private void postMessage(String from, Map<String, Object> body, String actionName) {
         String url = config.getGraphUrl() + "/" + from + "/messages";
+        log.info("WhatsApp {} request. url={}, body={}", actionName, url, body);
         webClient.post()
                 .uri(url)
                 .header(HttpHeaders.AUTHORIZATION, "Bearer " + config.getAccessToken())

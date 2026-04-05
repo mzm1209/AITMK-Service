@@ -39,6 +39,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     @Async
     public void process(String payload) {
         try {
+            log.info("Webhook payload received: {}", abbreviate(payload));
             WhatsAppWebhookRequest request = objectMapper.readValue(payload, WhatsAppWebhookRequest.class);
             if (request.getEntry() == null) {
                 log.info("Webhook ignored: entry is null");
@@ -52,8 +53,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
                 entry.getChanges().forEach(change -> {
                     if (change.getValue() == null || change.getValue().getMessages() == null) {
+                        log.info("Webhook change ignored: value/messages is null, field={}", change.getField());
                         return;
                     }
+                    log.info("Webhook change parsed. field={}, messageCount={}, contactCount={}",
+                            change.getField(),
+                            change.getValue().getMessages().size(),
+                            change.getValue().getContacts() == null ? 0 : change.getValue().getContacts().size());
 
                     String businessAccountId = "1019964791197772";
                     if (change.getValue().getMetadata() != null
@@ -70,7 +76,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 });
             });
         } catch (Exception e) {
-            log.error("Webhook processing error", e);
+            log.error("Webhook processing error. payload={}", abbreviate(payload), e);
         }
     }
 
@@ -271,5 +277,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             return false;
         }
         return Duration.between(lastCustomerBefore, now).toHours() > 24;
+    }
+
+    private String abbreviate(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ");
+        return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
     }
 }

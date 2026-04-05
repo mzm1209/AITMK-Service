@@ -532,6 +532,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     private JsonNode post(String path, Object body) {
         try {
+            String bodyText = abbreviateSafe(body);
+            log.info("CRM post request. path={}, body={}", path, bodyText);
             String resp = webClient.post()
                     .uri(crmConfig.getBaseUrl() + path)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -540,8 +542,10 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     .bodyToMono(String.class)
                     .block();
             if (resp == null || resp.isBlank()) {
+                log.warn("CRM post empty response. path={}", path);
                 return null;
             }
+            log.info("CRM post response. path={}, body={}", path, abbreviate(resp));
             return objectMapper.readTree(resp);
         } catch (Exception e) {
             log.error("CRM post failed path={}", path, e);
@@ -666,5 +670,21 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         } catch (DateTimeParseException e) {
             return Instant.now();
         }
+    }
+
+    private String abbreviateSafe(Object body) {
+        try {
+            return abbreviate(objectMapper.writeValueAsString(body));
+        } catch (Exception e) {
+            return "<serialize-failed>";
+        }
+    }
+
+    private String abbreviate(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ");
+        return normalized.length() > 1200 ? normalized.substring(0, 1200) + "...(truncated)" : normalized;
     }
 }
