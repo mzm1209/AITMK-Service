@@ -161,9 +161,13 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus) {
+        String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
+        if (normalizedAgentRowId == null || normalizedAgentRowId.isBlank()) {
+            return false;
+        }
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
-        controls.add(control(ASSIGN_AGENT_CONTROL_ID, agentAccountRowId));
+        controls.add(control(ASSIGN_AGENT_CONTROL_ID, normalizedAgentRowId));
         controls.add(control(ASSIGN_TIME_CONTROL_ID, now()));
         controls.add(control(ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID, now()));
         controls.add(selectControl(ASSIGN_SERVICE_STATUS_CONTROL_ID, serviceStatus));
@@ -228,11 +232,12 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                                  String agentAccountRowId,
                                  String sender,
                                  String message) {
+        String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(CHAT_BUSINESS_ACCOUNT_CONTROL_ID, businessAccountId));
         controls.add(control(CHAT_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
-        if (agentAccountRowId != null && !agentAccountRowId.isBlank()) {
-            controls.add(control(CHAT_AGENT_CONTROL_ID, agentAccountRowId));
+        if (normalizedAgentRowId != null && !normalizedAgentRowId.isBlank()) {
+            controls.add(control(CHAT_AGENT_CONTROL_ID, normalizedAgentRowId));
         }
         controls.add(selectControl(CHAT_SENDER_CONTROL_ID, sender));
         controls.add(control(CHAT_SEND_TIME_CONTROL_ID, now()));
@@ -577,7 +582,9 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             return "";
         }
         if (node.isTextual()) {
-            return node.asText();
+            String text = node.asText();
+            String relationId = normalizeRelationRowId(text);
+            return relationId == null || relationId.isBlank() ? text : relationId;
         }
         if (node.isArray() && !node.isEmpty()) {
             JsonNode first = node.get(0);
@@ -593,6 +600,51 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             return first.toString();
         }
         return node.toString();
+    }
+
+    /**
+     * 兼容 CRM 关联字段多种返回格式：
+     * 1) 纯 rowId 字符串
+     * 2) JSON 数组字符串（如 [{"sid":"..."}]）
+     * 3) JSON 对象字符串（如 {"rowid":"..."}）
+     */
+    private String normalizeRelationRowId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        String text = raw.trim();
+        if (!(text.startsWith("{") || text.startsWith("["))) {
+            return text;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(text);
+            if (node.isArray() && !node.isEmpty()) {
+                JsonNode first = node.get(0);
+                if (first.has("sid")) {
+                    return first.path("sid").asText("");
+                }
+                if (first.has("id")) {
+                    return first.path("id").asText("");
+                }
+                if (first.has("rowid")) {
+                    return first.path("rowid").asText("");
+                }
+            }
+            if (node.isObject()) {
+                if (node.has("sid")) {
+                    return node.path("sid").asText("");
+                }
+                if (node.has("id")) {
+                    return node.path("id").asText("");
+                }
+                if (node.has("rowid")) {
+                    return node.path("rowid").asText("");
+                }
+            }
+        } catch (Exception ignore) {
+            return text;
+        }
+        return text;
     }
 
     private String normalizeSender(String sender) {
