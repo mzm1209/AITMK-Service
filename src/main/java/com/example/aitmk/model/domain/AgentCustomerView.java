@@ -13,6 +13,8 @@ import java.time.Instant;
 public class AgentCustomerView {
 
     private String customerId;
+    /** 客户昵称（来自 webhook contacts.profile.name）。 */
+    private String customerNickname;
     private String lastMessage;
     private Instant lastMessageAt;
     /** 分配服务状态：服务中 / 已关闭 */

@@ -64,6 +64,7 @@ public class ChatController {
                     String status = statusMap.getOrDefault(c.getCustomerId(), "已关闭");
                     return AgentCustomerView.builder()
                             .customerId(c.getCustomerId())
+                            .customerNickname(c.getCustomerNickname())
                             .lastMessage(c.getLastMessage())
                             .lastMessageAt(c.getLastMessageAt())
                             .serviceStatus(status)
