@@ -29,6 +29,10 @@ public interface CrmOpenApiService {
      * 将该客户当前“服务中”的分配记录更新为“已关闭”。
      */
     boolean closeServingAssignment(String customerPhone);
+    /**
+     * 更新该客户当前“服务中”分配记录的是否可回复（是/否）。
+     */
+    boolean updateServingAssignmentReplyable(String customerPhone, boolean replyable);
 
     boolean addChatRecord(String businessAccountId,
                           String customerPhone,

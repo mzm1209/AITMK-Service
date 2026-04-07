@@ -19,6 +19,7 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.Instant;
 
 @Slf4j
@@ -97,6 +98,32 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
 
             String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
+            long hoursFromLastCustomerMessage = lastCustomerBefore == null
+                    ? -1L
+                    : Duration.between(lastCustomerBefore, Instant.now()).toHours();
+
+            if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24L * 30L) {
+                try {
+                    crmOpenApiService.closeServingAssignment(customerPhone);
+                } catch (Exception ex) {
+                    log.warn("Close assignment by 30-day rule failed. customer={}", customerPhone, ex);
+                }
+                agentDispatchService.unassignCustomer(customerPhone);
+                assignedAgent = null;
+                log.info("Assignment closed by 30-day rule, process as new session. customer={}", customerPhone);
+            } else if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24) {
+                try {
+                    crmOpenApiService.updateServingAssignmentReplyable(customerPhone, false);
+                } catch (Exception ex) {
+                    log.warn("Update replyable=false by 24-hour rule failed. customer={}", customerPhone, ex);
+                }
+            } else if (StringUtils.hasText(assignedAgent)) {
+                try {
+                    crmOpenApiService.updateServingAssignmentReplyable(customerPhone, true);
+                } catch (Exception ex) {
+                    log.warn("Update replyable=true failed. customer={}", customerPhone, ex);
+                }
+            }
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
             chatHistoryService.setCustomerNickname(customerPhone, contactName);

@@ -32,12 +32,6 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     /** agent -> profile（等级、权重、负载）。 */
     private final Map<String, AgentProfile> agentProfiles = new ConcurrentHashMap<>();
-    /** customer -> 最近客户消息时间。 */
-    private final Map<String, Long> customerLastMessageAtMillis = new ConcurrentHashMap<>();
-    /** customer -> 最近坐席回复时间。 */
-    private final Map<String, Long> customerLastAgentReplyAtMillis = new ConcurrentHashMap<>();
-    /** customer -> 是否已发出 5 分钟提醒。 */
-    private final Set<String> warnedCustomers = ConcurrentHashMap.newKeySet();
     /** 层级内轮询游标。 */
     private final Map<String, AtomicInteger> levelRoundRobin = new ConcurrentHashMap<>();
 
@@ -103,7 +97,6 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         }
         customerAgentMap.put(customerPhone, selected);
         pendingCustomers.remove(customerPhone);
-        warnedCustomers.remove(customerPhone);
         log.info("Assigned customer to agent. customer={}, agent={}, assignedCount={}, pendingCount={}",
                 customerPhone, selected, customerAgentMap.size(), pendingCustomers.size());
         return Optional.of(selected);
@@ -123,7 +116,6 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         if (customerAgentMap.remove(customerPhone) != null) {
             log.info("Customer unassigned from local map. customer={}, assignedCount={}", customerPhone, customerAgentMap.size());
         }
-        warnedCustomers.remove(customerPhone);
     }
 
     @Override
@@ -176,9 +168,6 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         }
 
         this.pendingCustomers.clear();
-        this.warnedCustomers.clear();
-        this.customerLastMessageAtMillis.clear();
-        this.customerLastAgentReplyAtMillis.clear();
     }
 
     @Override
@@ -195,56 +184,17 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     @Override
     public void markCustomerMessageAt(String customerPhone) {
-        if (customerPhone == null || customerPhone.isBlank()) {
-            return;
-        }
-        customerLastMessageAtMillis.put(customerPhone, System.currentTimeMillis());
-        warnedCustomers.remove(customerPhone);
+        // 超时回收逻辑已下线，不再记录本地时间戳
     }
 
     @Override
     public void markAgentReplied(String customerPhone) {
-        if (customerPhone == null || customerPhone.isBlank()) {
-            return;
-        }
-        customerLastAgentReplyAtMillis.put(customerPhone, System.currentTimeMillis());
-        warnedCustomers.remove(customerPhone);
+        // 超时回收逻辑已下线，不再记录本地时间戳
     }
 
     @Override
     public synchronized TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes) {
-        long now = System.currentTimeMillis();
-        long warnMillis = Math.max(1, warnMinutes) * 60_000L;
-        long reclaimMillis = Math.max(warnMinutes + 1, reclaimMinutes) * 60_000L;
-
-        Set<String> warn = new LinkedHashSet<>();
-        Set<String> reclaimed = new LinkedHashSet<>();
-
-        for (Map.Entry<String, String> entry : customerAgentMap.entrySet()) {
-            String customer = entry.getKey();
-            long customerMsgAt = customerLastMessageAtMillis.getOrDefault(customer, -1L);
-            if (customerMsgAt <= 0) {
-                continue;
-            }
-            long agentReplyAt = customerLastAgentReplyAtMillis.getOrDefault(customer, -1L);
-            if (agentReplyAt >= customerMsgAt) {
-                continue;
-            }
-            long idle = now - customerMsgAt;
-            if (idle >= reclaimMillis) {
-                reclaimed.add(customer);
-            } else if (idle >= warnMillis && !warnedCustomers.contains(customer)) {
-                warn.add(customer);
-            }
-        }
-
-        warn.forEach(warnedCustomers::add);
-        reclaimed.forEach(customer -> {
-            customerAgentMap.remove(customer);
-            pendingCustomers.add(customer);
-            warnedCustomers.remove(customer);
-        });
-        return new TimeoutScanResult(warn, reclaimed);
+        return new TimeoutScanResult(Set.of(), Set.of());
     }
 
     private String selectByLayeredScore() {

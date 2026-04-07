@@ -121,6 +121,7 @@ public class ChatController {
     public ResponseEntity<?> reply(@Valid @RequestBody ManualReplyRequest request) {
         Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
         if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
+            crmOpenApiService.updateServingAssignmentReplyable(request.getCustomerId(), false);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "客户最后一次回复已超过24小时，当前不允许直接人工回复"
@@ -147,6 +148,7 @@ public class ChatController {
     public ResponseEntity<?> mediaReply(@Valid @RequestBody ManualMediaReplyRequest request) {
         Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
         if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
+            crmOpenApiService.updateServingAssignmentReplyable(request.getCustomerId(), false);
             return ResponseEntity.badRequest().body(Map.of(
                     "success", false,
                     "message", "客户最后一次回复已超过24小时，当前不允许直接人工回复"
