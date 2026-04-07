@@ -19,7 +19,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
-import java.time.Duration;
 import java.time.Instant;
 
 @Slf4j
@@ -92,29 +91,12 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 return;
             }
 
-            Instant now = Instant.now();
             Instant lastCustomerBefore = chatHistoryService.lastCustomerMessageTime(customerPhone).orElse(null);
 
             log.info("Webhook message received. rawPhone={}, normalizedPhone={}, type={}, hasText={}, lastCustomerBefore={}",
                     rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
 
             String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
-
-            // 客户超24小时重新发起会话：关闭旧服务中记录并释放本地分配，走重新分配规则
-            if (StringUtils.hasText(assignedAgent) && isConversationExpired(lastCustomerBefore, now)) {
-                log.info("Conversation expired (>24h), close old assignment before handling new message. customer={}, oldAgent={}",
-                        customerPhone, assignedAgent);
-                try {
-                    boolean closeOk = crmOpenApiService.closeServingAssignment(customerPhone);
-                    if (!closeOk) {
-                        log.warn("Close serving assignment returned false. customer={}, oldAgent={}", customerPhone, assignedAgent);
-                    }
-                } catch (Exception ex) {
-                    log.error("Close serving assignment failed. customer={}, oldAgent={}", customerPhone, assignedAgent, ex);
-                }
-                agentDispatchService.unassignCustomer(customerPhone);
-                assignedAgent = null;
-            }
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
             chatHistoryService.setCustomerNickname(customerPhone, contactName);
@@ -270,13 +252,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
 
         return sb.toString();
-    }
-
-    private boolean isConversationExpired(Instant lastCustomerBefore, Instant now) {
-        if (lastCustomerBefore == null) {
-            return false;
-        }
-        return Duration.between(lastCustomerBefore, now).toHours() > 24;
     }
 
     private String abbreviate(String text) {
