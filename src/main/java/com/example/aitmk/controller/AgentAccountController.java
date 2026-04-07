@@ -3,6 +3,7 @@ package com.example.aitmk.controller;
 import com.example.aitmk.model.domain.AgentAccountUpsertRequest;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -35,6 +36,7 @@ public class AgentAccountController {
     private static final String LOGIN_PASSWORD_CONTROL_ID = "69abacc3433ec9f4b5e6ce25";
     private static final String LOGIN_RELATED_USER_CONTROL_ID = "69abacc3433ec9f4b5e6ce26";
     private static final String LOGIN_AGENT_LEVEL_CONTROL_ID = "69ca5415433ec9f4b5e7fced";
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final CrmOpenApiService crmOpenApiService;
 
@@ -46,7 +48,7 @@ public class AgentAccountController {
         List<Map<String, Object>> controls = buildControls(request, true);
         JsonNode root = crmOpenApiService.frontendAddRow(WORKSHEET_ID, controls, true);
         if (root == null || !root.path("success").asBoolean(false)) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "新增坐席账号失败"));
+            return ResponseEntity.badRequest().body(failBody("新增坐席账号失败", root));
         }
         return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -63,7 +65,7 @@ public class AgentAccountController {
         List<Map<String, Object>> controls = buildControls(request, false);
         JsonNode root = crmOpenApiService.frontendEditRow(WORKSHEET_ID, rowId, controls, true);
         if (root == null || !root.path("success").asBoolean(false)) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "修改坐席账号失败"));
+            return ResponseEntity.badRequest().body(failBody("修改坐席账号失败", root));
         }
         return ResponseEntity.ok(Map.of("success", true));
     }
@@ -78,7 +80,7 @@ public class AgentAccountController {
         }
         JsonNode root = crmOpenApiService.frontendGetFilterRows(WORKSHEET_ID, filters, pageSize, pageIndex, 0, List.of());
         if (root == null || !root.path("success").asBoolean(false)) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "查询坐席账号失败"));
+            return ResponseEntity.badRequest().body(failBody("查询坐席账号失败", root));
         }
         return ResponseEntity.ok(Map.of(
                 "success", true,
@@ -94,7 +96,7 @@ public class AgentAccountController {
         }
         JsonNode root = crmOpenApiService.frontendDeleteRow(WORKSHEET_ID, rowId, true);
         if (root == null || !root.path("success").asBoolean(false)) {
-            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "删除坐席账号失败"));
+            return ResponseEntity.badRequest().body(failBody("删除坐席账号失败", root));
         }
         return ResponseEntity.ok(Map.of("success", true));
     }
@@ -106,13 +108,78 @@ public class AgentAccountController {
             controls.add(control(LOGIN_PASSWORD_CONTROL_ID, request.getPassword()));
         }
         if (StringUtils.hasText(request.getRelatedUserIds())) {
-            controls.add(control(LOGIN_RELATED_USER_CONTROL_ID, request.getRelatedUserIds()));
+            controls.add(control(LOGIN_RELATED_USER_CONTROL_ID, normalizeRelationIds(request.getRelatedUserIds())));
         }
         if (request.getAgentLevel() != null) {
             // 关联记录字段（dataType=29）按字符串逗号分隔 rowId，全量覆盖
-            controls.add(control(LOGIN_AGENT_LEVEL_CONTROL_ID, request.getAgentLevel()));
+            controls.add(control(LOGIN_AGENT_LEVEL_CONTROL_ID, normalizeRelationIds(request.getAgentLevel())));
         }
         return controls;
+    }
+
+    /**
+     * 兼容三种前端传法：
+     * 1) 纯 rowId/accountId 或逗号分隔
+     * 2) JSON 数组字符串：[{"accountId":"..."}, {"sid":"..."}]
+     * 3) JSON 对象字符串：{"accountId":"..."} / {"sid":"..."} / {"rowid":"..."}
+     */
+    private String normalizeRelationIds(String raw) {
+        if (!StringUtils.hasText(raw)) {
+            return "";
+        }
+        String text = raw.trim();
+        if (!(text.startsWith("[") || text.startsWith("{"))) {
+            return text;
+        }
+        try {
+            JsonNode root = OBJECT_MAPPER.readTree(text);
+            List<String> ids = new ArrayList<>();
+            if (root.isArray()) {
+                root.forEach(node -> {
+                    String id = extractRelationId(node);
+                    if (StringUtils.hasText(id)) {
+                        ids.add(id);
+                    }
+                });
+            } else if (root.isObject()) {
+                String id = extractRelationId(root);
+                if (StringUtils.hasText(id)) {
+                    ids.add(id);
+                }
+            }
+            return ids.isEmpty() ? text : String.join(",", ids);
+        } catch (Exception e) {
+            return text;
+        }
+    }
+
+    private String extractRelationId(JsonNode node) {
+        if (node == null || node.isNull()) {
+            return "";
+        }
+        if (node.has("accountId")) {
+            return node.path("accountId").asText("");
+        }
+        if (node.has("sid")) {
+            return node.path("sid").asText("");
+        }
+        if (node.has("rowid")) {
+            return node.path("rowid").asText("");
+        }
+        if (node.has("id")) {
+            return node.path("id").asText("");
+        }
+        return "";
+    }
+
+    private Map<String, Object> failBody(String message, JsonNode root) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("message", message);
+        if (root != null && !root.isMissingNode()) {
+            body.put("crmResponse", root);
+        }
+        return body;
     }
 
     private Map<String, Object> control(String controlId, Object value) {
