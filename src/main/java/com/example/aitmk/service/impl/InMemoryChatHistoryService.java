@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -107,9 +108,16 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
 
     @Override
     public void replaceAll(Map<String, List<ChatMessageRecord>> records) {
+        Map<String, String> existingNickname = new HashMap<>(nicknameByCustomer);
         recordsByCustomer.clear();
         records.forEach((k, v) -> recordsByCustomer.put(k, new ArrayList<>(v)));
         nicknameByCustomer.clear();
+        recordsByCustomer.keySet().forEach(customerId -> {
+            String nickname = existingNickname.get(customerId);
+            if (nickname != null && !nickname.isBlank()) {
+                nicknameByCustomer.put(customerId, nickname);
+            }
+        });
     }
 
     /**
