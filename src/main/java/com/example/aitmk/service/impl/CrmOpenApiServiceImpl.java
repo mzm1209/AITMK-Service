@@ -340,6 +340,41 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         return edit != null && edit.path("success").asBoolean(false);
     }
 
+    @Override
+    public boolean assignAiReception(String customerPhone) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(AI_POOL_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(AI_POOL_WORKSHEET_ID, filters, 1);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+        JsonNode row = firstRow(root);
+        if (row == null) {
+            return false;
+        }
+        String rowId = row.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "已分配"));
+        controls.add(control(AI_POOL_TRANSFER_TIME_CONTROL_ID, now()));
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", AI_POOL_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
+    }
+
 
     @Override
     public JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow) {

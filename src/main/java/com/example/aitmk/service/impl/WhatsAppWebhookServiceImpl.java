@@ -166,7 +166,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.info("Customer marked pending because no online agent. customer={}", customerPhone);
             }
             try {
-                crmOpenApiService.openAiReception(customerPhone, hasOnlineAgent ? "首次会话" : "非工作日");
+                String reason = hasOnlineAgent ? "首次会话" : "非工作日";
+                crmOpenApiService.openAiReception(customerPhone, reason);
             } catch (Exception ex) {
                 log.warn("Open AI reception failed. customer={}", customerPhone, ex);
             }
@@ -202,7 +203,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         if (!crmOk) {
                             log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
                         }
-                        crmOpenApiService.closeAiReception(customerPhone);
+                        crmOpenApiService.assignAiReception(customerPhone);
                     } catch (Exception ex) {
                         log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }

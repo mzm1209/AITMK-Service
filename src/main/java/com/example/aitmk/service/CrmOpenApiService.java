@@ -45,6 +45,8 @@ public interface CrmOpenApiService {
 
     /** 将 AI 接待池中的服务状态更新为已关闭。 */
     boolean closeAiReception(String customerPhone);
+    /** 将 AI 接待池中的服务状态更新为已分配，并设置转出时间。 */
+    boolean assignAiReception(String customerPhone);
 
 
     /**

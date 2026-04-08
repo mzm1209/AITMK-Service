@@ -73,6 +73,7 @@ public class AuthController {
             }
             String customerPhone = pending.get();
             crmOpenApiService.addAssignmentRecord(customerPhone, agent.getRowId(), "服务中");
+            crmOpenApiService.assignAiReception(customerPhone);
             agentPushService.pushHistory(agent.getRowId(), customerPhone, chatHistoryService.listMessages(customerPhone));
         }
 
