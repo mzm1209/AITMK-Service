@@ -6,7 +6,6 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -52,17 +51,7 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
             return;
         }
         onlineAgents.remove(normalizedAgentId);
-        // 坐席下线时释放其负责会话，进入待分配队列（AI兜底逻辑由上层编排）
-        Set<String> released = new HashSet<>();
-        customerAgentMap.forEach((customer, agent) -> {
-            if (normalizedAgentId.equals(normalizeAgentId(agent))) {
-                released.add(customer);
-            }
-        });
-        released.forEach(customer -> {
-            customerAgentMap.remove(customer);
-            pendingCustomers.add(customer);
-        });
+        // 下线后仅影响“新会话分配候选”；既有会话继续保持原坐席绑定
         log.info("Agent offline. agent={}, onlineCount={}", normalizedAgentId, onlineAgents.size());
     }
 
