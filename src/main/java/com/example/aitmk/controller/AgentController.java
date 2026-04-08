@@ -2,6 +2,7 @@ package com.example.aitmk.controller;
 
 import com.example.aitmk.model.domain.WsReconnectRequest;
 import com.example.aitmk.service.AgentPushService;
+import com.example.aitmk.service.impl.AgentSessionActivityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,12 +20,14 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentController {
 
     private final AgentPushService agentPushService;
+    private final AgentSessionActivityService sessionActivityService;
 
     /**
      * 客户端 WebSocket 重连成功后主动通知服务端，触发失败消息重推。
      */
     @PostMapping("/ws/reconnected")
     public ResponseEntity<Void> wsReconnected(@Valid @RequestBody WsReconnectRequest request) {
+        sessionActivityService.touch(request.getAgentRowId());
         agentPushService.resendFailed(request.getAgentRowId());
         return ResponseEntity.ok().build();
     }

@@ -9,6 +9,7 @@ import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.impl.AgentSessionActivityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -42,6 +43,7 @@ public class ChatController {
     private final CrmOpenApiService crmOpenApiService;
     /** 坐席分配服务（读取客户归属坐席）。 */
     private final AgentDispatchService agentDispatchService;
+    private final AgentSessionActivityService sessionActivityService;
 
     /**
      * 拉取客户列表，按最近消息时间倒序返回。
@@ -57,6 +59,7 @@ public class ChatController {
      */
     @GetMapping("/customers/serving")
     public ResponseEntity<List<AgentCustomerView>> servingCustomers(@RequestParam("agentRowId") String agentRowId) {
+        sessionActivityService.touch(agentRowId);
         Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
         List<AgentCustomerView> customers = chatHistoryService.listCustomers().stream()
                 .filter(c -> statusMap.containsKey(c.getCustomerId()))
@@ -133,6 +136,7 @@ public class ChatController {
         agentDispatchService.markAgentReplied(request.getCustomerId());
 
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
+        sessionActivityService.touch(assignedAgent);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", request.getMessage());
         return ResponseEntity.ok(Map.of("success", true));
     }
@@ -184,6 +188,7 @@ public class ChatController {
         agentDispatchService.markAgentReplied(request.getCustomerId());
 
         String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
+        sessionActivityService.touch(assignedAgent);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", recordMessage);
         return ResponseEntity.ok(Map.of("success", true));
     }

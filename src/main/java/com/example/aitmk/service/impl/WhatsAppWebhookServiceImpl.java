@@ -148,14 +148,23 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     .timestamp(Instant.now())
                     .build();
 
-            if (StringUtils.hasText(assignedAgent)) {
-                // 已有坐席接待：停止 AI 自动回复，仅推送给坐席
+            boolean assignedAgentOnline = StringUtils.hasText(assignedAgent)
+                    && agentDispatchService.onlineAgentsSnapshot().contains(assignedAgent);
+
+            if (StringUtils.hasText(assignedAgent) && assignedAgentOnline) {
+                // 已有坐席接待且在线：停止 AI 自动回复，仅推送给坐席
                 try {
                     agentPushService.pushNewMessage(assignedAgent, customerPhone, customerRecord);
                     log.info("Pushed new customer message to assigned agent. agent={}, customer={}", assignedAgent, customerPhone);
                 } catch (Exception ex) {
                     log.error("Push new message to assigned agent failed. agent={}, customer={}", assignedAgent, customerPhone, ex);
                 }
+                return;
+            }
+
+            if (StringUtils.hasText(assignedAgent)) {
+                // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 自动回复兜底
+                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
                 return;
             }
 
@@ -173,26 +182,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             // 4) 未分配客户走 AI流程（失败不影响本地缓存）
-            try {
-                String aiReplyJson = aiService.chat(customerContent);
-                String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
-
-                chatHistoryService.recordAiReply(customerPhone, aiAnswer);
-                log.info("Local history recorded for AI reply. customer={}", customerPhone);
-
-                sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
-
-                try {
-                    boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
-                    if (!crmOk) {
-                        log.warn("CRM add AI chat record returned false. customer={}", customerPhone);
-                    }
-                } catch (Exception ex) {
-                    log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
-                }
-            } catch (Exception ex) {
-                log.error("AI reply flow failed. customer={}", customerPhone, ex);
-            }
+            doAiReplyFlow(businessAccountId, customerPhone, customerContent);
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
             if (hasOnlineAgent) {
@@ -288,5 +278,28 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
         String normalized = text.replaceAll("\\s+", " ");
         return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
+    }
+
+    private void doAiReplyFlow(String businessAccountId, String customerPhone, String customerContent) {
+        try {
+            String aiReplyJson = aiService.chat(customerContent);
+            String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
+
+            chatHistoryService.recordAiReply(customerPhone, aiAnswer);
+            log.info("Local history recorded for AI reply. customer={}", customerPhone);
+
+            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+
+            try {
+                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
+                if (!crmOk) {
+                    log.warn("CRM add AI chat record returned false. customer={}", customerPhone);
+                }
+            } catch (Exception ex) {
+                log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
+            }
+        } catch (Exception ex) {
+            log.error("AI reply flow failed. customer={}", customerPhone, ex);
+        }
     }
 }
