@@ -15,8 +15,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<?> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException ex) {
         return ResponseEntity.status(HttpStatus.PAYLOAD_TOO_LARGE).body(Map.of(
                 "success", false,
-                "message", "上传文件过大，当前最大支持 10MB"
+                "message", "上传文件过大，当前最大支持 100MB"
         ));
     }
 }
-
