@@ -68,7 +68,7 @@ public class AgentInactiveScheduler {
 
             try {
                 String aiRaw = aiService.chat(last.getMessage());
-                String aiText = AiReplyParser.extractAnswer(aiRaw);
+                String aiText = AiReplyParser.parseAnswer(aiRaw);
                 chatHistoryService.recordAiReply(customerPhone, aiText);
                 sendMessageService.sendTextMessage(defaultBusinessAccountId, customerPhone, aiText);
                 crmOpenApiService.addChatRecord(defaultBusinessAccountId, customerPhone, offlineAgentRowId, "AI", aiText);
