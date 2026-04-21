@@ -28,8 +28,9 @@ public class DifyAiServiceImpl implements AiService {
         String url = config.getBaseUrl() + "/v1/chat-messages";
 
         Map<String, Object> body = buildRequest(query, false);
+        log.info("Dify chat request. url={}, queryLength={}", url, query == null ? 0 : query.length());
 
-        return webClient.post()
+        String response = webClient.post()
                 .uri(url)
                 .header("Authorization", "Bearer " + config.getApiKey())
                 .contentType(MediaType.APPLICATION_JSON)
@@ -37,6 +38,8 @@ public class DifyAiServiceImpl implements AiService {
                 .retrieve()
                 .bodyToMono(String.class)
                 .block(); // 同步返回
+        log.info("Dify chat response: {}", response);
+        return response;
     }
 
     @Override
@@ -45,6 +48,7 @@ public class DifyAiServiceImpl implements AiService {
         String url = config.getBaseUrl() + "/v1/chat-messages";
 
         Map<String, Object> body = buildRequest(query, true);
+        log.info("Dify chatStream request. url={}, queryLength={}", url, query == null ? 0 : query.length());
 
         Flux<String> flux = webClient.post()
                 .uri(url)

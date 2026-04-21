@@ -20,6 +20,8 @@ public class Message {
     private Location location;
     private Button button;
     private Interactive interactive;
+    private Context context;
+    private Referral referral;
 
     @Data
     public static class Text {
@@ -59,6 +61,47 @@ public class Message {
             private String id;
             private String title;
             private String description;
+        }
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Context {
+        /** 业务号码 / 来源号码 */
+        private String from;
+        /** 上下文消息ID */
+        private String id;
+        /** 转发标记 */
+        private Boolean forwarded;
+        /** 频繁转发标记 */
+        private Boolean frequently_forwarded;
+        private ReferredProduct referred_product;
+
+        @Data
+        public static class ReferredProduct {
+            private String catalog_id;
+            private String product_retailer_id;
+        }
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
+    public static class Referral {
+        private String source_url;
+        private String source_id;
+        private String source_type;
+        private String body;
+        private String headline;
+        private String media_type;
+        private String image_url;
+        private String video_url;
+        private String thumbnail_url;
+        private String ctwa_clid;
+        private WelcomeMessage welcome_message;
+
+        @Data
+        public static class WelcomeMessage {
+            private String text;
         }
     }
 }

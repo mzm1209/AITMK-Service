@@ -1,9 +1,16 @@
 package com.example.aitmk.service;
 
+import org.springframework.web.multipart.MultipartFile;
+
 /**
  * WhatsApp 消息发送服务
  */
 public interface SendMessageService {
+
+    /**
+     * 上传媒体文件到 Meta，返回 mediaId。
+     */
+    String uploadMedia(String from, String mediaType, MultipartFile file);
 
     /**
      * 发送文本消息
@@ -11,16 +18,27 @@ public interface SendMessageService {
      * @param to      用户手机号（含国家码）
      * @param message 消息内容
      */
-    void sendTextMessage(String from ,String to, String message);
+    void sendTextMessage(String from, String to, String message);
+
+    /**
+     * 发送媒体消息，支持通过 mediaId 或 link 发送。
+     */
+    void sendMediaMessage(String from,
+                          String to,
+                          String mediaType,
+                          String mediaId,
+                          String mediaUrl,
+                          String filename,
+                          String caption);
 
     /**
      * 发送图片消息
      *
-     * @param to      用户手机号（含国家码）
+     * @param to       用户手机号（含国家码）
      * @param imageUrl 图片 URL
-     * @param caption 图片说明，可为空
+     * @param caption  图片说明，可为空
      */
-    void sendImageMessage(String from ,String to, String imageUrl, String caption);
+    void sendImageMessage(String from, String to, String imageUrl, String caption);
 
     /**
      * 发送视频消息。

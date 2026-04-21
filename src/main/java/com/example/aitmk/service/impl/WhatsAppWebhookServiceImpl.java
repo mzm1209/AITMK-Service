@@ -17,7 +17,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
+import java.time.Duration;
 import java.time.Instant;
 
 @Slf4j
@@ -37,6 +39,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     @Async
     public void process(String payload) {
         try {
+            log.info("Webhook payload received: {}", abbreviate(payload));
             WhatsAppWebhookRequest request = objectMapper.readValue(payload, WhatsAppWebhookRequest.class);
             if (request.getEntry() == null) {
                 log.info("Webhook ignored: entry is null");
@@ -50,8 +53,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
                 entry.getChanges().forEach(change -> {
                     if (change.getValue() == null || change.getValue().getMessages() == null) {
+                        log.info("Webhook change ignored: value/messages is null, field={}", change.getField());
                         return;
                     }
+                    log.info("Webhook change parsed. field={}, messageCount={}, contactCount={}",
+                            change.getField(),
+                            change.getValue().getMessages().size(),
+                            change.getValue().getContacts() == null ? 0 : change.getValue().getContacts().size());
 
                     String businessAccountId = "1019964791197772";
                     if (change.getValue().getMetadata() != null
@@ -61,34 +69,74 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     }
 
                     String finalBusinessAccountId = businessAccountId;
-                    change.getValue().getMessages().forEach(message -> processOneMessage(finalBusinessAccountId, message));
+                    change.getValue().getMessages().forEach(message -> {
+                        String contactName = resolveContactName(change.getValue(), message == null ? null : message.getFrom());
+                        processOneMessage(finalBusinessAccountId, message, contactName);
+                    });
                 });
             });
         } catch (Exception e) {
-            log.error("Webhook processing error", e);
+            log.error("Webhook processing error. payload={}", abbreviate(payload), e);
         }
     }
 
-    private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message) {
+    private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message, String contactName) {
         try {
             WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
-            String customerPhone = parsed.getFrom();
-            String customerText = parsed.getText() == null ? "" : parsed.getText();
+            String rawCustomerPhone = parsed.getFrom();
+            String customerPhone = normalizeCustomerPhone(rawCustomerPhone);
+            String customerContent = buildCustomerContent(parsed);
 
-            if (customerPhone == null || customerPhone.isBlank()) {
-                log.warn("Skip message because customer phone is blank");
+            if (!StringUtils.hasText(customerPhone)) {
+                log.warn("Skip message because customer phone is blank. rawPhone={}", rawCustomerPhone);
                 return;
             }
 
+            Instant lastCustomerBefore = chatHistoryService.lastCustomerMessageTime(customerPhone).orElse(null);
+
+            log.info("Webhook message received. rawPhone={}, normalizedPhone={}, type={}, hasText={}, lastCustomerBefore={}",
+                    rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
+
+            String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
+            long hoursFromLastCustomerMessage = lastCustomerBefore == null
+                    ? -1L
+                    : Duration.between(lastCustomerBefore, Instant.now()).toHours();
+
+            if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24L * 30L) {
+                try {
+                    crmOpenApiService.closeServingAssignment(customerPhone);
+                } catch (Exception ex) {
+                    log.warn("Close assignment by 30-day rule failed. customer={}", customerPhone, ex);
+                }
+                agentDispatchService.unassignCustomer(customerPhone);
+                assignedAgent = null;
+                log.info("Assignment closed by 30-day rule, process as new session. customer={}", customerPhone);
+            } else if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24) {
+                try {
+                    crmOpenApiService.updateServingAssignmentReplyable(customerPhone, false);
+                } catch (Exception ex) {
+                    log.warn("Update replyable=false by 24-hour rule failed. customer={}", customerPhone, ex);
+                }
+            } else if (StringUtils.hasText(assignedAgent)) {
+                try {
+                    crmOpenApiService.updateServingAssignmentReplyable(customerPhone, true);
+                } catch (Exception ex) {
+                    log.warn("Update replyable=true failed. customer={}", customerPhone, ex);
+                }
+            }
+
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
-            chatHistoryService.recordCustomerMessage(customerPhone, customerText);
-            log.info("Local history recorded for customer message. customer={}", customerPhone);
+            chatHistoryService.setCustomerNickname(customerPhone, contactName);
+            chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
+            agentDispatchService.markCustomerMessageAt(customerPhone);
+            log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
 
-            String assignedAgent = agentDispatchService.getAssignedAgent(customerPhone).orElse(null);
-
-            // 2) CRM记录失败不影响主流程
+            // 2) CRM记录失败不影响主流程（但必须有明确日志）
             try {
-                crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerText);
+                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerContent);
+                if (!crmOk) {
+                    log.warn("CRM add customer chat record returned false. customer={}, assignedAgent={}", customerPhone, assignedAgent);
+                }
             } catch (Exception ex) {
                 log.error("CRM add customer chat record failed. customer={}", customerPhone, ex);
             }
@@ -96,12 +144,15 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             ChatMessageRecord customerRecord = ChatMessageRecord.builder()
                     .customerId(customerPhone)
                     .sender("customer")
-                    .message(customerText)
+                    .message(customerContent)
                     .timestamp(Instant.now())
                     .build();
 
-            if (assignedAgent != null && !assignedAgent.isBlank()) {
-                // 已有坐席接待：停止 AI 自动回复，仅推送给坐席
+            boolean assignedAgentOnline = StringUtils.hasText(assignedAgent)
+                    && agentDispatchService.onlineAgentsSnapshot().contains(assignedAgent);
+
+            if (StringUtils.hasText(assignedAgent) && assignedAgentOnline) {
+                // 已有坐席接待且在线：停止 AI 自动回复，仅推送给坐席
                 try {
                     agentPushService.pushNewMessage(assignedAgent, customerPhone, customerRecord);
                     log.info("Pushed new customer message to assigned agent. agent={}, customer={}", assignedAgent, customerPhone);
@@ -111,38 +162,38 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 return;
             }
 
+            if (StringUtils.hasText(assignedAgent)) {
+                // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 自动回复兜底
+                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+                return;
+            }
+
             // 3) 未分配客户：先保证本地队列状态正确
             boolean hasOnlineAgent = agentDispatchService.hasOnlineAgent();
             if (!hasOnlineAgent) {
                 agentDispatchService.markUnassigned(customerPhone);
                 log.info("Customer marked pending because no online agent. customer={}", customerPhone);
             }
-
-            // 4) AI流程（失败不影响本地缓存）
             try {
-                String aiReplyJson = aiService.chat(customerText);
-                String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
-
-                chatHistoryService.recordAiReply(customerPhone, aiAnswer);
-                log.info("Local history recorded for AI reply. customer={}", customerPhone);
-
-                sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
-
-                try {
-                    crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
-                } catch (Exception ex) {
-                    log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
-                }
+                String reason = hasOnlineAgent ? "首次会话" : "非工作日";
+                crmOpenApiService.openAiReception(customerPhone, reason);
             } catch (Exception ex) {
-                log.error("AI reply flow failed. customer={}", customerPhone, ex);
+                log.warn("Open AI reception failed. customer={}", customerPhone, ex);
             }
+
+            // 4) 未分配客户走 AI流程（失败不影响本地缓存）
+            doAiReplyFlow(businessAccountId, customerPhone, customerContent);
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
             if (hasOnlineAgent) {
                 agentDispatchService.assignIfAbsent(customerPhone).ifPresentOrElse(agentRowId -> {
                     log.info("Customer assigned locally. customer={}, agent={}", customerPhone, agentRowId);
                     try {
-                        crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        if (!crmOk) {
+                            log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
+                        }
+                        crmOpenApiService.assignAiReception(customerPhone);
                     } catch (Exception ex) {
                         log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }
@@ -154,13 +205,101 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         log.error("Push history to agent failed. customer={}, agent={}", customerPhone, agentRowId, ex);
                     }
                 }, () -> {
-                    // 理论上 hasOnlineAgent=true 时不会进入，但这里兜底保证本地队列正确
                     agentDispatchService.markUnassigned(customerPhone);
                     log.warn("Assign failed unexpectedly, fallback mark pending. customer={}", customerPhone);
                 });
             }
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);
+        }
+    }
+
+    private String lookupAssignedAgent(String rawCustomerPhone, String normalizedCustomerPhone) {
+        if (StringUtils.hasText(rawCustomerPhone)) {
+            String fromRaw = agentDispatchService.getAssignedAgent(rawCustomerPhone.trim()).orElse(null);
+            if (StringUtils.hasText(fromRaw)) {
+                return fromRaw;
+            }
+        }
+        return agentDispatchService.getAssignedAgent(normalizedCustomerPhone).orElse(null);
+    }
+
+    private String normalizeCustomerPhone(String rawPhone) {
+        if (!StringUtils.hasText(rawPhone)) {
+            return "";
+        }
+        return rawPhone.replaceAll("[^0-9]", "");
+    }
+
+    private String resolveContactName(com.example.aitmk.model.webhook.WhatsAppValue value, String from) {
+        if (value == null || value.getContacts() == null || value.getContacts().isEmpty()) {
+            return "";
+        }
+        String normalizedFrom = normalizeCustomerPhone(from);
+        for (com.example.aitmk.model.webhook.WhatsAppValue.Contact contact : value.getContacts()) {
+            if (contact == null) {
+                continue;
+            }
+            String waId = normalizeCustomerPhone(contact.getWa_id());
+            if (StringUtils.hasText(normalizedFrom) && !normalizedFrom.equals(waId)) {
+                continue;
+            }
+            if (contact.getProfile() != null && StringUtils.hasText(contact.getProfile().getName())) {
+                return contact.getProfile().getName().trim();
+            }
+        }
+        return "";
+    }
+
+    private String buildCustomerContent(WhatsAppMessage parsed) {
+        if (StringUtils.hasText(parsed.getText())) {
+            return parsed.getText().trim();
+        }
+
+        String type = StringUtils.hasText(parsed.getType()) ? parsed.getType().trim().toLowerCase() : "unknown";
+        StringBuilder sb = new StringBuilder("[").append(type).append("]");
+
+        if (StringUtils.hasText(parsed.getMediaId())) {
+            sb.append(" mediaId=").append(parsed.getMediaId());
+        }
+        if (StringUtils.hasText(parsed.getMediaUrl())) {
+            sb.append(" url=").append(parsed.getMediaUrl());
+        }
+        if ("location".equals(type) && parsed.getLatitude() != null && parsed.getLongitude() != null) {
+            sb.append(" lat=").append(parsed.getLatitude()).append(" lng=").append(parsed.getLongitude());
+        }
+
+        return sb.toString();
+    }
+
+    private String abbreviate(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ");
+        return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
+    }
+
+    private void doAiReplyFlow(String businessAccountId, String customerPhone, String customerContent) {
+        try {
+            String aiReplyJson = aiService.chat(customerContent);
+            String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
+
+            chatHistoryService.recordAiReply(customerPhone, aiAnswer);
+            log.info("Local history recorded for AI reply. customer={}", customerPhone);
+
+            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+
+            try {
+                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
+                if (!crmOk) {
+                    log.warn("CRM add AI chat record returned false. customer={}", customerPhone);
+                }
+            } catch (Exception ex) {
+                log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
+            }
+        } catch (Exception ex) {
+            log.error("AI reply flow failed. customer={}", customerPhone, ex);
         }
     }
 }

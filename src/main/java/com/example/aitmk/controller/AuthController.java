@@ -9,6 +9,7 @@ import com.example.aitmk.service.AgentPushService;
 import com.example.aitmk.service.CacheSyncService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.service.impl.AgentSessionActivityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -17,9 +18,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 登录服务：
@@ -35,9 +34,7 @@ public class AuthController {
     private final AgentPushService agentPushService;
     private final ChatHistoryService chatHistoryService;
     private final CacheSyncService cacheSyncService;
-
-    /** 登录记录ID缓存（agentRowId -> loginRecordRowId）。 */
-    private final Map<String, String> loginRecordMap = new ConcurrentHashMap<>();
+    private final AgentSessionActivityService sessionActivityService;
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
@@ -57,13 +54,14 @@ public class AuthController {
         // 防重复登录：若该坐席已有“在线”记录，则不再新增在线状态记录
         Optional<String> onlineLoginRecord = crmOpenApiService.findOnlineLoginRecordRowId(agent.getRowId());
         if (onlineLoginRecord.isPresent()) {
-            loginRecordMap.put(agent.getRowId(), onlineLoginRecord.get());
+            sessionActivityService.onLogin(agent.getRowId(), onlineLoginRecord.get());
         } else {
             Optional<String> loginRecord = crmOpenApiService.addAgentLoginRecord(agent.getRowId(), "在线");
-            loginRecord.ifPresent(id -> loginRecordMap.put(agent.getRowId(), id));
+            loginRecord.ifPresent(id -> sessionActivityService.onLogin(agent.getRowId(), id));
         }
 
         agentDispatchService.markOnline(agent.getRowId());
+        sessionActivityService.touch(agent.getRowId());
 
         // 若存在“未分配客户”，在坐席登录后立即补分配，并推送完整历史
         while (true) {
@@ -73,6 +71,7 @@ public class AuthController {
             }
             String customerPhone = pending.get();
             crmOpenApiService.addAssignmentRecord(customerPhone, agent.getRowId(), "服务中");
+            crmOpenApiService.assignAiReception(customerPhone);
             agentPushService.pushHistory(agent.getRowId(), customerPhone, chatHistoryService.listMessages(customerPhone));
         }
 
@@ -88,7 +87,7 @@ public class AuthController {
     public ResponseEntity<LoginResponse> logout(@Valid @RequestBody LogoutRequest request) {
         agentDispatchService.markOffline(request.getAgentRowId());
 
-        String loginRecordRowId = loginRecordMap.get(request.getAgentRowId());
+        String loginRecordRowId = sessionActivityService.onLogout(request.getAgentRowId());
         if (loginRecordRowId != null) {
             crmOpenApiService.updateAgentLoginStatus(loginRecordRowId, "离线");
         }

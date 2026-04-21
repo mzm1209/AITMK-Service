@@ -1,0 +1,256 @@
+package com.example.aitmk.controller;
+
+import com.example.aitmk.model.domain.ClueFieldQueryRequest;
+import com.example.aitmk.model.domain.ClueQueryRequest;
+import com.example.aitmk.model.domain.ClueUpsertRequest;
+import com.example.aitmk.service.CrmOpenApiService;
+import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.ResponseEntity;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 线索管理表（CRM）CRUD 接口，供 IM Web 使用。
+ */
+@RestController
+@RequestMapping("/api/leads/clues")
+@RequiredArgsConstructor
+public class ClueController {
+
+    private final CrmOpenApiService crmOpenApiService;
+
+    /**
+     * 默认使用线索管理表 worksheetId，可通过配置覆盖。
+     */
+    @Value("${crm.clue.worksheet-id:leads_bank}")
+    private String clueWorksheetId;
+
+    @PostMapping
+    public ResponseEntity<?> add(@Valid @RequestBody ClueUpsertRequest request) {
+        JsonNode root = crmOpenApiService.frontendAddRow(
+                clueWorksheetId,
+                request.getControls(),
+                request.getTriggerWorkflow() == null || request.getTriggerWorkflow()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("新增线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "rowId", root.path("data").asText("")
+        ));
+    }
+
+    @PutMapping("/{rowId}")
+    public ResponseEntity<?> edit(@PathVariable String rowId,
+                                  @Valid @RequestBody ClueUpsertRequest request) {
+        if (!StringUtils.hasText(rowId)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
+        }
+        JsonNode root = crmOpenApiService.frontendEditRow(
+                clueWorksheetId,
+                rowId,
+                request.getControls(),
+                request.getTriggerWorkflow() == null || request.getTriggerWorkflow()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("修改线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    @GetMapping
+    public ResponseEntity<?> list(@RequestParam(value = "keyword", required = false) String keyword,
+                                  @RequestParam(value = "keywordControlId", required = false) String keywordControlId,
+                                  @RequestParam(value = "keywordDataType", defaultValue = "2") int keywordDataType,
+                                  @RequestParam(value = "keywordFilterType", defaultValue = "7") int keywordFilterType,
+                                  @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
+                                  @RequestParam(value = "pageIndex", defaultValue = "1") int pageIndex) {
+        List<Map<String, Object>> filters = new java.util.ArrayList<>();
+        if (StringUtils.hasText(keyword) && StringUtils.hasText(keywordControlId)) {
+            filters.add(filter(keywordControlId.trim(), keyword.trim(), keywordDataType, 1, keywordFilterType));
+        }
+        JsonNode root = crmOpenApiService.frontendGetFilterRows(clueWorksheetId, filters, pageSize, pageIndex, 0, List.of());
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("查询线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "total", root.path("data").path("total").asInt(0),
+                "rows", root.path("data").path("rows")
+        ));
+    }
+
+    @PostMapping("/query")
+    public ResponseEntity<?> query(@RequestBody ClueQueryRequest request) {
+        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+                clueWorksheetId,
+                request.getFilters(),
+                request.getPageSize(),
+                request.getPageIndex(),
+                request.getListType(),
+                request.getSortControls()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("查询线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "total", root.path("data").path("total").asInt(0),
+                "rows", root.path("data").path("rows")
+        ));
+    }
+
+
+
+    /**
+     * 按“线索管理”预设字段（白名单）构建查询。
+     */
+    @PostMapping("/query/fields")
+    public ResponseEntity<?> queryByFields(@RequestBody ClueFieldQueryRequest request) {
+        List<Map<String, Object>> filters = buildWhitelistedFilters(request.getCriteria());
+        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+                clueWorksheetId,
+                filters,
+                request.getPageSize(),
+                request.getPageIndex(),
+                request.getListType(),
+                List.of()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("按字段查询线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "total", root.path("data").path("total").asInt(0),
+                "rows", root.path("data").path("rows")
+        ));
+    }
+
+    @GetMapping("/{rowId}")
+    public ResponseEntity<?> detail(@PathVariable String rowId) {
+        if (!StringUtils.hasText(rowId)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
+        }
+        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+                clueWorksheetId,
+                List.of(filter("rowid", rowId.trim(), 2, 1, 2)),
+                1,
+                1,
+                0,
+                List.of()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("查询线索详情失败", root));
+        }
+        JsonNode rows = root.path("data").path("rows");
+        JsonNode item = rows.isArray() && rows.size() > 0 ? rows.get(0) : null;
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "row", item
+        ));
+    }
+
+    @DeleteMapping("/{rowId}")
+    public ResponseEntity<?> delete(@PathVariable String rowId,
+                                    @RequestParam(value = "triggerWorkflow", defaultValue = "true") boolean triggerWorkflow) {
+        if (!StringUtils.hasText(rowId)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
+        }
+        JsonNode root = crmOpenApiService.frontendDeleteRow(clueWorksheetId, rowId, triggerWorkflow);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("删除线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of("success", true));
+    }
+
+
+    private List<Map<String, Object>> buildWhitelistedFilters(Map<String, Object> criteria) {
+        Map<String, Object> input = criteria == null ? Map.of() : criteria;
+        List<Map<String, Object>> filters = new java.util.ArrayList<>();
+
+        applyFieldFilter(filters, input, "66c1e299666ad6264b6f5e15", 16, 1, 37, null);
+        applyFieldFilter(filters, input, "66bdb9a46e5c3bc8e0c7df9a", 2, 1, 2, null);
+        applyFieldFilter(filters, input, "66b1f86d9d2c721e325fac78", 2, 1, 2, null);
+        applyFieldFilter(filters, input, "687fa4dd005dfd294df9dc3e", 3, 1, 2, null);
+        applyFieldFilter(filters, input, "66eeb5b0f53d52846e007a35", 27, 1, 51, null);
+        applyFieldFilter(filters, input, "66b36b8cce042770da7218b0", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "66b5e34a7e23d13674f24129", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "681c86c01e19a610d7200418", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "67d3f3f3286831392e292f7a", 35, 1, 51, null);
+        applyFieldFilter(filters, input, "66b310829b545d2337ac4433", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "66b3692d3e774217ade72e25", 2, 1, 2, null);
+        applyFieldFilter(filters, input, "66b30ef13e774217ade66e77", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "68c24754b75138cd755fb47b", 29, 1, 51, null);
+        applyFieldFilter(filters, input, "66bb90bece042770da7b7041", 16, 1, 37, null);
+        applyFieldFilter(filters, input, "68c252c0b75138cd755fb620", 26, 1, 51, null);
+        applyFieldFilter(filters, input, "68382b94811c335bfbcdf7ac", 11, 1, 51, List.of("be8f208d-c1e7-4024-a2b0-d1068a21f217"));
+        applyFieldFilter(filters, input, "68383410811c335bfbcdf7c9", 11, 1, 51, null);
+        applyFieldFilter(filters, input, "683832d8811c335bfbcdf7bf", 16, 1, 37, null);
+        applyFieldFilter(filters, input, "6836a787811c335bfbcdf35a", 8, 1, 11, null);
+        return filters;
+    }
+
+    private void applyFieldFilter(List<Map<String, Object>> filters,
+                                  Map<String, Object> criteria,
+                                  String controlId,
+                                  int dataType,
+                                  int spliceType,
+                                  int filterType,
+                                  Object defaultValue) {
+        Object value = criteria.get(controlId);
+        if (value == null && defaultValue != null) {
+            value = defaultValue;
+        }
+        if (value == null) {
+            return;
+        }
+        if (value instanceof String str && !StringUtils.hasText(str)) {
+            return;
+        }
+
+        Map<String, Object> item = new HashMap<>();
+        item.put("controlId", controlId);
+        item.put("dataType", dataType);
+        item.put("spliceType", spliceType);
+        item.put("filterType", filterType);
+        item.put("value", value);
+        item.put("dynamicSource", List.of());
+        filters.add(item);
+    }
+
+    private Map<String, Object> failBody(String message, JsonNode root) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("success", false);
+        body.put("message", message);
+        if (root != null && !root.isMissingNode()) {
+            body.put("crmResponse", root);
+        }
+        return body;
+    }
+
+    private Map<String, Object> filter(String controlId, String value, int dataType, int spliceType, int filterType) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("controlId", controlId);
+        item.put("dataType", dataType);
+        item.put("spliceType", spliceType);
+        item.put("filterType", filterType);
+        item.put("value", value);
+        return item;
+    }
+}

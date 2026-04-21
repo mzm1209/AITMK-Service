@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Optional;
@@ -26,18 +27,32 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     private final Set<String> onlineAgents = new LinkedHashSet<>();
     private final Map<String, String> customerAgentMap = new ConcurrentHashMap<>();
     private final Set<String> pendingCustomers = new LinkedHashSet<>();
-    private final AtomicInteger roundRobinIndex = new AtomicInteger(0);
+    private final AtomicInteger roundRobinIndex = new AtomicInteger(0); // 默认层级兜底轮询指针
+
+    /** agent -> profile（等级、权重、负载）。 */
+    private final Map<String, AgentProfile> agentProfiles = new ConcurrentHashMap<>();
+    /** 层级内轮询游标。 */
+    private final Map<String, AtomicInteger> levelRoundRobin = new ConcurrentHashMap<>();
 
     @Override
     public synchronized void markOnline(String agentRowId) {
-        onlineAgents.add(agentRowId);
-        log.info("Agent online. agent={}, onlineCount={}", agentRowId, onlineAgents.size());
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return;
+        }
+        onlineAgents.add(normalizedAgentId);
+        log.info("Agent online. agent={}, onlineCount={}", normalizedAgentId, onlineAgents.size());
     }
 
     @Override
     public synchronized void markOffline(String agentRowId) {
-        onlineAgents.remove(agentRowId);
-        log.info("Agent offline. agent={}, onlineCount={}", agentRowId, onlineAgents.size());
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return;
+        }
+        onlineAgents.remove(normalizedAgentId);
+        // 下线后仅影响“新会话分配候选”；既有会话继续保持原坐席绑定
+        log.info("Agent offline. agent={}, onlineCount={}", normalizedAgentId, onlineAgents.size());
     }
 
     @Override
@@ -63,9 +78,12 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
             return Optional.empty();
         }
 
-        ArrayList<String> queue = new ArrayList<>(onlineAgents);
-        int idx = Math.floorMod(roundRobinIndex.getAndIncrement(), queue.size());
-        String selected = queue.get(idx);
+        String selected = selectByLayeredScore();
+        if (selected == null) {
+            ArrayList<String> queue = new ArrayList<>(onlineAgents);
+            int idx = Math.floorMod(roundRobinIndex.getAndIncrement(), queue.size());
+            selected = queue.get(idx);
+        }
         customerAgentMap.put(customerPhone, selected);
         pendingCustomers.remove(customerPhone);
         log.info("Assigned customer to agent. customer={}, agent={}, assignedCount={}, pendingCount={}",
@@ -81,16 +99,28 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         }
     }
 
+
+    @Override
+    public synchronized void unassignCustomer(String customerPhone) {
+        if (customerAgentMap.remove(customerPhone) != null) {
+            log.info("Customer unassigned from local map. customer={}, assignedCount={}", customerPhone, customerAgentMap.size());
+        }
+    }
+
     @Override
     public synchronized Optional<String> assignOnePendingCustomerToAgent(String agentRowId) {
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return Optional.empty();
+        }
         if (pendingCustomers.isEmpty()) {
             return Optional.empty();
         }
         String customer = pendingCustomers.iterator().next();
         pendingCustomers.remove(customer);
-        customerAgentMap.put(customer, agentRowId);
+        customerAgentMap.put(customer, normalizedAgentId);
         log.info("Assign pending customer to newly online agent. customer={}, agent={}, pendingCount={}",
-                customer, agentRowId, pendingCustomers.size());
+                customer, normalizedAgentId, pendingCustomers.size());
         return Optional.of(customer);
     }
 
@@ -107,11 +137,182 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     @Override
     public synchronized void replaceState(Set<String> onlineAgents, Map<String, String> assignments) {
         this.onlineAgents.clear();
-        this.onlineAgents.addAll(onlineAgents);
+        if (onlineAgents != null) {
+            onlineAgents.forEach(agent -> {
+                String normalized = normalizeAgentId(agent);
+                if (normalized != null && !normalized.isBlank()) {
+                    this.onlineAgents.add(normalized);
+                }
+            });
+        }
 
         this.customerAgentMap.clear();
-        this.customerAgentMap.putAll(assignments);
+        if (assignments != null) {
+            assignments.forEach((customer, agent) -> {
+                String normalized = normalizeAgentId(agent);
+                if (normalized != null && !normalized.isBlank()) {
+                    this.customerAgentMap.put(customer, normalized);
+                }
+            });
+        }
 
         this.pendingCustomers.clear();
     }
+
+    @Override
+    public void setAgentProfile(String agentRowId, String level, double weight, int maxLoad) {
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) {
+            return;
+        }
+        String normalizedLevel = normalizeLevel(level);
+        int normalizedMaxLoad = Math.max(maxLoad, 1);
+        double normalizedWeight = weight <= 0 ? 1.0d : weight;
+        agentProfiles.put(normalizedAgentId, new AgentProfile(normalizedLevel, normalizedWeight, normalizedMaxLoad));
+    }
+
+    @Override
+    public void markCustomerMessageAt(String customerPhone) {
+        // 超时回收逻辑已下线，不再记录本地时间戳
+    }
+
+    @Override
+    public void markAgentReplied(String customerPhone) {
+        // 超时回收逻辑已下线，不再记录本地时间戳
+    }
+
+    @Override
+    public synchronized TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes) {
+        return new TimeoutScanResult(Set.of(), Set.of());
+    }
+
+    private String selectByLayeredScore() {
+        Map<String, Integer> onlineByLevel = new HashMap<>();
+        Map<String, Integer> assignedByLevel = new HashMap<>();
+        Map<String, Integer> levelCapacity = new HashMap<>();
+
+        for (String agent : onlineAgents) {
+            AgentProfile profile = profileOf(agent);
+            onlineByLevel.merge(profile.level(), 1, Integer::sum);
+            levelCapacity.merge(profile.level(), profile.maxLoad(), Integer::sum);
+        }
+        customerAgentMap.forEach((customer, agent) -> {
+            AgentProfile profile = profileOf(agent);
+            assignedByLevel.merge(profile.level(), 1, Integer::sum);
+        });
+
+        String bestLevel = null;
+        double bestScore = Double.NEGATIVE_INFINITY;
+        for (String level : onlineByLevel.keySet()) {
+            int onlineCount = onlineByLevel.getOrDefault(level, 0);
+            int assigned = assignedByLevel.getOrDefault(level, 0);
+            int capacity = levelCapacity.getOrDefault(level, 0);
+            int remain = capacity - assigned;
+            if (remain <= 0 || onlineCount <= 0) {
+                continue;
+            }
+            double levelWeight = defaultLevelFactor(level);
+            double configuredWeight = averageWeightByLevel(level);
+            double score = levelWeight * configuredWeight * remain;
+            if (score > bestScore) {
+                bestScore = score;
+                bestLevel = level;
+            }
+        }
+        if (bestLevel == null) {
+            return null;
+        }
+        return selectAgentInLevel(bestLevel);
+    }
+
+    private String selectAgentInLevel(String level) {
+        ArrayList<String> candidates = new ArrayList<>();
+        for (String agent : onlineAgents) {
+            AgentProfile profile = profileOf(agent);
+            if (!level.equals(profile.level())) {
+                continue;
+            }
+            long currentLoad = customerAgentMap.values().stream().filter(agent::equals).count();
+            if (currentLoad < profile.maxLoad()) {
+                candidates.add(agent);
+            }
+        }
+        if (candidates.isEmpty()) {
+            return null;
+        }
+        AtomicInteger idx = levelRoundRobin.computeIfAbsent(level, k -> new AtomicInteger(0));
+        return candidates.get(Math.floorMod(idx.getAndIncrement(), candidates.size()));
+    }
+
+    private double averageWeightByLevel(String level) {
+        double total = 0d;
+        int count = 0;
+        for (String agent : onlineAgents) {
+            AgentProfile p = profileOf(agent);
+            if (level.equals(p.level())) {
+                total += p.weight();
+                count++;
+            }
+        }
+        return count == 0 ? 1.0d : total / count;
+    }
+
+    private AgentProfile profileOf(String agent) {
+        return agentProfiles.getOrDefault(normalizeAgentId(agent), new AgentProfile("中级", 1.0d, 8));
+    }
+
+    private double defaultLevelFactor(String level) {
+        return switch (normalizeLevel(level)) {
+            case "高级" -> 1.1d;
+            case "初级" -> 0.9d;
+            default -> 1.0d;
+        };
+    }
+
+    private String normalizeLevel(String level) {
+        if (level == null) {
+            return "中级";
+        }
+        String v = level.trim();
+        if ("高级".equals(v) || "中级".equals(v) || "初级".equals(v)) {
+            return v;
+        }
+        return "中级";
+    }
+
+    /**
+     * 兼容 rowId 与关联字段 JSON 文本（如 [{"sid":"..."}]）两种坐席 ID 形态。
+     */
+    private String normalizeAgentId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        String text = raw.trim();
+        if (!(text.startsWith("[") || text.startsWith("{"))) {
+            return text;
+        }
+        try {
+            int sidIdx = text.indexOf("\"sid\"");
+            if (sidIdx >= 0) {
+                int start = text.indexOf('"', text.indexOf(':', sidIdx) + 1) + 1;
+                int end = text.indexOf('"', start);
+                if (start > 0 && end > start) {
+                    return text.substring(start, end);
+                }
+            }
+            int rowIdIdx = text.indexOf("\"rowid\"");
+            if (rowIdIdx >= 0) {
+                int start = text.indexOf('"', text.indexOf(':', rowIdIdx) + 1) + 1;
+                int end = text.indexOf('"', start);
+                if (start > 0 && end > start) {
+                    return text.substring(start, end);
+                }
+            }
+        } catch (Exception ignore) {
+            return text;
+        }
+        return text;
+    }
+
+    private record AgentProfile(String level, double weight, int maxLoad) {}
 }

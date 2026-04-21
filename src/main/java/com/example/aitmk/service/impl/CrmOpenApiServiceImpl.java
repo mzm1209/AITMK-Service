@@ -47,6 +47,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String ASSIGN_TIME_CONTROL_ID = "69abb8d7433ec9f4b5e6d05f";
     private static final String ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID = "69abb984433ec9f4b5e6d069";
     private static final String ASSIGN_SERVICE_STATUS_CONTROL_ID = "69abba17433ec9f4b5e6d06e";
+    private static final String ASSIGN_REPLYABLE_CONTROL_ID = "69d4b066433ec9f4b5e86d1d";
 
     private static final String CHAT_WORKSHEET_ID = "ltjl1";
     private static final String CHAT_BUSINESS_ACCOUNT_CONTROL_ID = "69abbccf433ec9f4b5e6d0fe";
@@ -55,6 +56,12 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String CHAT_SENDER_CONTROL_ID = "69abbfff433ec9f4b5e6d226";
     private static final String CHAT_SEND_TIME_CONTROL_ID = "69abbfff433ec9f4b5e6d227";
     private static final String CHAT_CONTENT_CONTROL_ID = "69abbfff433ec9f4b5e6d228";
+    private static final String AI_POOL_WORKSHEET_ID = "aijdc";
+    private static final String AI_POOL_CUSTOMER_PHONE_CONTROL_ID = "69cb3e3b433ec9f4b5e80433";
+    private static final String AI_POOL_ASSIGN_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80476";
+    private static final String AI_POOL_REASON_CONTROL_ID = "69cb3ff3433ec9f4b5e80477";
+    private static final String AI_POOL_STATUS_CONTROL_ID = "69cb3ff3433ec9f4b5e80478";
+    private static final String AI_POOL_TRANSFER_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80479";
 
     private static final DateTimeFormatter CRM_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-M-d HH:mm:ss");
 
@@ -155,14 +162,113 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus) {
+        String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
+        if (normalizedAgentRowId == null || normalizedAgentRowId.isBlank()) {
+            return false;
+        }
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
-        controls.add(control(ASSIGN_AGENT_CONTROL_ID, agentAccountRowId));
+        controls.add(control(ASSIGN_AGENT_CONTROL_ID, normalizedAgentRowId));
         controls.add(control(ASSIGN_TIME_CONTROL_ID, now()));
         controls.add(control(ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID, now()));
         controls.add(selectControl(ASSIGN_SERVICE_STATUS_CONTROL_ID, serviceStatus));
+        controls.add(selectControl(ASSIGN_REPLYABLE_CONTROL_ID, "是"));
         JsonNode root = addRow(ASSIGNMENT_WORKSHEET_ID, controls);
         return root != null && root.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean closeServingAssignment(String customerPhone) {
+        List<Map<String, Object>> filters = List.of(
+                filter(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(ASSIGN_SERVICE_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, filters, 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) {
+            return false;
+        }
+
+        JsonNode target = null;
+        Instant latest = Instant.EPOCH;
+        for (JsonNode row : rows) {
+            Instant t = parseCrmTime(extractAsText(row, ASSIGN_TIME_CONTROL_ID));
+            if (target == null || t.isAfter(latest)) {
+                target = row;
+                latest = t;
+            }
+        }
+
+        if (target == null) {
+            return false;
+        }
+
+        String rowId = target.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(ASSIGN_SERVICE_STATUS_CONTROL_ID, "已关闭"));
+        controls.add(control(ASSIGN_CUSTOMER_LAST_CALL_TIME_CONTROL_ID, now()));
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", ASSIGNMENT_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean updateServingAssignmentReplyable(String customerPhone, boolean replyable) {
+        List<Map<String, Object>> filters = List.of(
+                filter(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(ASSIGN_SERVICE_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, filters, 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) {
+            return false;
+        }
+        JsonNode target = null;
+        Instant latest = Instant.EPOCH;
+        for (JsonNode row : rows) {
+            Instant t = parseCrmTime(extractAsText(row, ASSIGN_TIME_CONTROL_ID));
+            if (target == null || t.isAfter(latest)) {
+                target = row;
+                latest = t;
+            }
+        }
+        if (target == null) {
+            return false;
+        }
+        String rowId = target.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(ASSIGN_REPLYABLE_CONTROL_ID, replyable ? "是" : "否"));
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", ASSIGNMENT_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
     }
 
     @Override
@@ -171,17 +277,172 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                                  String agentAccountRowId,
                                  String sender,
                                  String message) {
+        String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(CHAT_BUSINESS_ACCOUNT_CONTROL_ID, businessAccountId));
         controls.add(control(CHAT_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
-        if (agentAccountRowId != null && !agentAccountRowId.isBlank()) {
-            controls.add(control(CHAT_AGENT_CONTROL_ID, agentAccountRowId));
+        if (normalizedAgentRowId != null && !normalizedAgentRowId.isBlank()) {
+            controls.add(control(CHAT_AGENT_CONTROL_ID, normalizedAgentRowId));
         }
         controls.add(selectControl(CHAT_SENDER_CONTROL_ID, sender));
         controls.add(control(CHAT_SEND_TIME_CONTROL_ID, now()));
         controls.add(control(CHAT_CONTENT_CONTROL_ID, message));
         JsonNode root = addRow(CHAT_WORKSHEET_ID, controls);
         return root != null && root.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean openAiReception(String customerPhone, String reason) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(control(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
+        controls.add(control(AI_POOL_ASSIGN_TIME_CONTROL_ID, now()));
+        controls.add(selectControl(AI_POOL_REASON_CONTROL_ID, reason == null || reason.isBlank() ? "首次会话" : reason));
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "服务中"));
+        JsonNode root = addRow(AI_POOL_WORKSHEET_ID, controls);
+        return root != null && root.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean closeAiReception(String customerPhone) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(AI_POOL_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(AI_POOL_WORKSHEET_ID, filters, 1);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+        JsonNode row = firstRow(root);
+        if (row == null) {
+            return false;
+        }
+        String rowId = row.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "已关闭"));
+        controls.add(control(AI_POOL_TRANSFER_TIME_CONTROL_ID, now()));
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", AI_POOL_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
+    }
+
+    @Override
+    public boolean assignAiReception(String customerPhone) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(AI_POOL_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(AI_POOL_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(AI_POOL_WORKSHEET_ID, filters, 1);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return false;
+        }
+        JsonNode row = firstRow(root);
+        if (row == null) {
+            return false;
+        }
+        String rowId = row.path("rowid").asText("");
+        if (rowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> controls = new ArrayList<>();
+        controls.add(selectControl(AI_POOL_STATUS_CONTROL_ID, "已分配"));
+        controls.add(control(AI_POOL_TRANSFER_TIME_CONTROL_ID, now()));
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", AI_POOL_WORKSHEET_ID);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", true);
+        body.put("controls", controls);
+        JsonNode edit = post("/api/v2/open/worksheet/editRow", body);
+        return edit != null && edit.path("success").asBoolean(false);
+    }
+
+
+    @Override
+    public JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank()) {
+            return null;
+        }
+        List<Map<String, Object>> allControls = new ArrayList<>(controls == null ? List.of() : controls);
+        if (crmConfig.getOwnerId() != null && !crmConfig.getOwnerId().isBlank()) {
+            allControls.add(control("ownerid", crmConfig.getOwnerId()));
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        body.put("controls", allControls);
+        return post("/api/v2/open/worksheet/addRow", body);
+    }
+
+    @Override
+    public JsonNode frontendGetFilterRows(String worksheetId,
+                                          List<Map<String, Object>> filters,
+                                          int pageSize,
+                                          int pageIndex,
+                                          int listType,
+                                          List<Map<String, Object>> sortControls) {
+        if (worksheetId == null || worksheetId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("pageSize", pageSize <= 0 ? 50 : pageSize);
+        body.put("pageIndex", pageIndex <= 0 ? 1 : pageIndex);
+        body.put("listType", listType);
+        body.put("controls", sortControls == null ? List.of() : sortControls);
+        body.put("filters", filters == null ? List.of() : filters);
+        return post("/api/v2/open/worksheet/getFilterRows", body);
+    }
+
+    @Override
+    public JsonNode frontendEditRow(String worksheetId, String rowId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        body.put("controls", controls == null ? List.of() : controls);
+        return post("/api/v2/open/worksheet/editRow", body);
+    }
+
+    @Override
+    public JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow) {
+        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
+            return null;
+        }
+        Map<String, Object> body = new HashMap<>();
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
+        body.put("worksheetId", worksheetId);
+        body.put("rowId", rowId);
+        body.put("triggerWorkflow", triggerWorkflow);
+        return post("/api/v2/open/worksheet/deleteRow", body);
     }
 
     @Override
@@ -351,6 +612,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     private JsonNode post(String path, Object body) {
         try {
+            String bodyText = abbreviateSafe(body);
+            log.info("CRM post request. path={}, body={}", path, bodyText);
             String resp = webClient.post()
                     .uri(crmConfig.getBaseUrl() + path)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -359,8 +622,10 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     .bodyToMono(String.class)
                     .block();
             if (resp == null || resp.isBlank()) {
+                log.warn("CRM post empty response. path={}", path);
                 return null;
             }
+            log.info("CRM post response. path={}, body={}", path, abbreviate(resp));
             return objectMapper.readTree(resp);
         } catch (Exception e) {
             log.error("CRM post failed path={}", path, e);
@@ -401,7 +666,9 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             return "";
         }
         if (node.isTextual()) {
-            return node.asText();
+            String text = node.asText();
+            String relationId = normalizeRelationRowId(text);
+            return relationId == null || relationId.isBlank() ? text : relationId;
         }
         if (node.isArray() && !node.isEmpty()) {
             JsonNode first = node.get(0);
@@ -417,6 +684,51 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             return first.toString();
         }
         return node.toString();
+    }
+
+    /**
+     * 兼容 CRM 关联字段多种返回格式：
+     * 1) 纯 rowId 字符串
+     * 2) JSON 数组字符串（如 [{"sid":"..."}]）
+     * 3) JSON 对象字符串（如 {"rowid":"..."}）
+     */
+    private String normalizeRelationRowId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw;
+        }
+        String text = raw.trim();
+        if (!(text.startsWith("{") || text.startsWith("["))) {
+            return text;
+        }
+        try {
+            JsonNode node = objectMapper.readTree(text);
+            if (node.isArray() && !node.isEmpty()) {
+                JsonNode first = node.get(0);
+                if (first.has("sid")) {
+                    return first.path("sid").asText("");
+                }
+                if (first.has("id")) {
+                    return first.path("id").asText("");
+                }
+                if (first.has("rowid")) {
+                    return first.path("rowid").asText("");
+                }
+            }
+            if (node.isObject()) {
+                if (node.has("sid")) {
+                    return node.path("sid").asText("");
+                }
+                if (node.has("id")) {
+                    return node.path("id").asText("");
+                }
+                if (node.has("rowid")) {
+                    return node.path("rowid").asText("");
+                }
+            }
+        } catch (Exception ignore) {
+            return text;
+        }
+        return text;
     }
 
     private String normalizeSender(String sender) {
@@ -438,5 +750,21 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         } catch (DateTimeParseException e) {
             return Instant.now();
         }
+    }
+
+    private String abbreviateSafe(Object body) {
+        try {
+            return abbreviate(objectMapper.writeValueAsString(body));
+        } catch (Exception e) {
+            return "<serialize-failed>";
+        }
+    }
+
+    private String abbreviate(String text) {
+        if (text == null) {
+            return "";
+        }
+        String normalized = text.replaceAll("\\s+", " ");
+        return normalized.length() > 1200 ? normalized.substring(0, 1200) + "...(truncated)" : normalized;
     }
 }

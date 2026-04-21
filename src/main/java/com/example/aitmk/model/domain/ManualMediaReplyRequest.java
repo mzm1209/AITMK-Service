@@ -24,9 +24,13 @@ public class ManualMediaReplyRequest {
     private String mediaType;
 
     /**
-     * 媒体链接（Meta 可访问 URL）。
+     * 媒体 ID（优先使用，来自 Meta 上传接口返回）。
      */
-    @NotBlank
+    private String mediaId;
+
+    /**
+     * 媒体链接（当未提供 mediaId 时使用）。
+     */
     private String mediaUrl;
 
     /**
