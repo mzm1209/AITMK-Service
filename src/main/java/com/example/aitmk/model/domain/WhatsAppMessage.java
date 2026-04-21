@@ -14,4 +14,17 @@ public class WhatsAppMessage {
     private String mediaUrl;
     private Double latitude;
     private Double longitude;
+
+    /** 来自 context 的上文消息ID。 */
+    private String contextMessageId;
+    private String contextFrom;
+    private Boolean forwarded;
+    private Boolean frequentlyForwarded;
+
+    /** Click to WhatsApp 广告来源字段。 */
+    private String referralSourceType;
+    private String referralSourceId;
+    private String referralHeadline;
+    private String referralBody;
+    private String referralCtaClid;
 }
