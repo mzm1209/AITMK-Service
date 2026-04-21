@@ -112,6 +112,20 @@ public class SendMessageServiceImpl implements SendMessageService {
             mediaBody.put("filename", filename.trim());
         }
 
+    @Override
+    public void sendDocumentMessage(String from, String to, String documentUrl, String filename, String caption) {
+        Map<String, String> document = new HashMap<>();
+        document.put("link", documentUrl);
+        if (filename != null && !filename.isBlank()) {
+            document.put("filename", filename);
+        }
+        if (caption != null && !caption.isBlank()) {
+            document.put("caption", caption);
+        }
+        sendMediaMessage(from, to, "document", document, "sendDocumentMessage");
+    }
+
+    private void sendMediaMessage(String from, String to, String type, Map<String, String> mediaBody, String actionName) {
         Map<String, Object> body = new HashMap<>();
         body.put("messaging_product", "whatsapp");
         body.put("to", to);
