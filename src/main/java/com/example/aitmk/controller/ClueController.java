@@ -34,7 +34,7 @@ import java.util.Map;
 public class ClueController {
 
     private final CrmOpenApiService crmOpenApiService;
-    private static final String PHONE_CONTROL_ID = "66bdb9a46e5c3bc8e0c7df9a";
+    private static final String PHONE_CONTROL_ID = "687fa4dd005dfd294df9dc3e";
 
     /**
      * 默认使用线索管理表 worksheetId，可通过配置覆盖。
@@ -335,11 +335,7 @@ public class ClueController {
         item.put("dataType", 3);
         item.put("spliceType", 1);
         item.put("filterType", 1);
-        item.put("dateRange", 0);
-        item.put("dateRangeType", 3);
-        item.put("isDynamicsource", false);
-        item.put("dynamicSource", List.of());
-        item.put("values", List.of(phone));
+        item.put("value", phone);
         return item;
     }
 }
