@@ -41,13 +41,19 @@ public class ClueController {
      */
     @Value("${crm.clue.worksheet-id:leads_bank}")
     private String clueWorksheetId;
+    @Value("${crm.clue.appKey:${crm.appKey:}}")
+    private String clueAppKey;
+    @Value("${crm.clue.sign:${crm.sign:}}")
+    private String clueSign;
 
     @PostMapping
     public ResponseEntity<?> add(@Valid @RequestBody ClueUpsertRequest request) {
-        JsonNode root = crmOpenApiService.frontendAddRow(
+        JsonNode root = crmOpenApiService.frontendAddRowWithCredential(
                 clueWorksheetId,
                 request.getControls(),
-                request.getTriggerWorkflow() == null || request.getTriggerWorkflow()
+                request.getTriggerWorkflow() == null || request.getTriggerWorkflow(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("新增线索失败", root));
@@ -64,11 +70,13 @@ public class ClueController {
         if (!StringUtils.hasText(rowId)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
         }
-        JsonNode root = crmOpenApiService.frontendEditRow(
+        JsonNode root = crmOpenApiService.frontendEditRowWithCredential(
                 clueWorksheetId,
                 rowId,
                 request.getControls(),
-                request.getTriggerWorkflow() == null || request.getTriggerWorkflow()
+                request.getTriggerWorkflow() == null || request.getTriggerWorkflow(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("修改线索失败", root));
@@ -87,7 +95,9 @@ public class ClueController {
         if (StringUtils.hasText(keyword) && StringUtils.hasText(keywordControlId)) {
             filters.add(filter(keywordControlId.trim(), keyword.trim(), keywordDataType, 1, keywordFilterType));
         }
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(clueWorksheetId, filters, pageSize, pageIndex, 0, List.of());
+        JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
+                clueWorksheetId, filters, pageSize, pageIndex, 0, List.of(), clueAppKey, clueSign
+        );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("查询线索失败", root));
         }
@@ -100,13 +110,15 @@ public class ClueController {
 
     @PostMapping("/query")
     public ResponseEntity<?> query(@RequestBody ClueQueryRequest request) {
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+        JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
                 clueWorksheetId,
                 request.getFilters(),
                 request.getPageSize(),
                 request.getPageIndex(),
                 request.getListType(),
-                request.getSortControls()
+                request.getSortControls(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("查询线索失败", root));
@@ -143,13 +155,15 @@ public class ClueController {
             ));
         }
         List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 2, 1, 2));
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+        JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
                 clueWorksheetId,
                 filters,
                 pageSize,
                 pageIndex,
                 0,
-                List.of()
+                List.of(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("按手机号查询线索失败", root));
@@ -168,13 +182,15 @@ public class ClueController {
     @PostMapping("/query/fields")
     public ResponseEntity<?> queryByFields(@RequestBody ClueFieldQueryRequest request) {
         List<Map<String, Object>> filters = buildWhitelistedFilters(request.getCriteria());
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+        JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
                 clueWorksheetId,
                 filters,
                 request.getPageSize(),
                 request.getPageIndex(),
                 request.getListType(),
-                List.of()
+                List.of(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("按字段查询线索失败", root));
@@ -202,13 +218,15 @@ public class ClueController {
         if (!StringUtils.hasText(rowId)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
         }
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+        JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
                 clueWorksheetId,
                 List.of(filter("rowid", rowId.trim(), 2, 1, 2)),
                 1,
                 1,
                 0,
-                List.of()
+                List.of(),
+                clueAppKey,
+                clueSign
         );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("查询线索详情失败", root));
@@ -227,7 +245,9 @@ public class ClueController {
         if (!StringUtils.hasText(rowId)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
         }
-        JsonNode root = crmOpenApiService.frontendDeleteRow(clueWorksheetId, rowId, triggerWorkflow);
+        JsonNode root = crmOpenApiService.frontendDeleteRowWithCredential(
+                clueWorksheetId, rowId, triggerWorkflow, clueAppKey, clueSign
+        );
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(failBody("删除线索失败", root));
         }

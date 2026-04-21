@@ -378,6 +378,15 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        return frontendAddRowWithCredential(worksheetId, controls, triggerWorkflow, crmConfig.getAppKey(), crmConfig.getSign());
+    }
+
+    @Override
+    public JsonNode frontendAddRowWithCredential(String worksheetId,
+                                                 List<Map<String, Object>> controls,
+                                                 boolean triggerWorkflow,
+                                                 String appKey,
+                                                 String sign) {
         if (worksheetId == null || worksheetId.isBlank()) {
             return null;
         }
@@ -386,8 +395,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             allControls.add(control("ownerid", crmConfig.getOwnerId()));
         }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        body.put("appKey", appKey);
+        body.put("sign", sign);
         body.put("worksheetId", worksheetId);
         body.put("triggerWorkflow", triggerWorkflow);
         body.put("controls", allControls);
@@ -401,12 +410,26 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                                           int pageIndex,
                                           int listType,
                                           List<Map<String, Object>> sortControls) {
+        return frontendGetFilterRowsWithCredential(
+                worksheetId, filters, pageSize, pageIndex, listType, sortControls, crmConfig.getAppKey(), crmConfig.getSign()
+        );
+    }
+
+    @Override
+    public JsonNode frontendGetFilterRowsWithCredential(String worksheetId,
+                                                        List<Map<String, Object>> filters,
+                                                        int pageSize,
+                                                        int pageIndex,
+                                                        int listType,
+                                                        List<Map<String, Object>> sortControls,
+                                                        String appKey,
+                                                        String sign) {
         if (worksheetId == null || worksheetId.isBlank()) {
             return null;
         }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        body.put("appKey", appKey);
+        body.put("sign", sign);
         body.put("worksheetId", worksheetId);
         body.put("pageSize", pageSize <= 0 ? 50 : pageSize);
         body.put("pageIndex", pageIndex <= 0 ? 1 : pageIndex);
@@ -418,12 +441,24 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendEditRow(String worksheetId, String rowId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
+        return frontendEditRowWithCredential(
+                worksheetId, rowId, controls, triggerWorkflow, crmConfig.getAppKey(), crmConfig.getSign()
+        );
+    }
+
+    @Override
+    public JsonNode frontendEditRowWithCredential(String worksheetId,
+                                                  String rowId,
+                                                  List<Map<String, Object>> controls,
+                                                  boolean triggerWorkflow,
+                                                  String appKey,
+                                                  String sign) {
         if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
             return null;
         }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        body.put("appKey", appKey);
+        body.put("sign", sign);
         body.put("worksheetId", worksheetId);
         body.put("rowId", rowId);
         body.put("triggerWorkflow", triggerWorkflow);
@@ -433,12 +468,21 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow) {
+        return frontendDeleteRowWithCredential(worksheetId, rowId, triggerWorkflow, crmConfig.getAppKey(), crmConfig.getSign());
+    }
+
+    @Override
+    public JsonNode frontendDeleteRowWithCredential(String worksheetId,
+                                                    String rowId,
+                                                    boolean triggerWorkflow,
+                                                    String appKey,
+                                                    String sign) {
         if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
             return null;
         }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        body.put("appKey", appKey);
+        body.put("sign", sign);
         body.put("worksheetId", worksheetId);
         body.put("rowId", rowId);
         body.put("triggerWorkflow", triggerWorkflow);
