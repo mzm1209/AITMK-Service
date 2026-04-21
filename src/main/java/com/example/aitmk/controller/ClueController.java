@@ -154,7 +154,7 @@ public class ClueController {
                     "message", "phone 不能为空"
             ));
         }
-        List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 2, 1, 2));
+        List<Map<String, Object>> filters = List.of(phoneContainsFilter(PHONE_CONTROL_ID, phone.trim()));
         JsonNode root = crmOpenApiService.frontendGetFilterRowsWithCredential(
                 clueWorksheetId,
                 filters,
@@ -262,7 +262,7 @@ public class ClueController {
         applyFieldFilter(filters, input, "66c1e299666ad6264b6f5e15", 16, 1, 37, null);
         applyFieldFilter(filters, input, "66bdb9a46e5c3bc8e0c7df9a", 2, 1, 2, null);
         applyFieldFilter(filters, input, "66b1f86d9d2c721e325fac78", 2, 1, 2, null);
-        applyFieldFilter(filters, input, "687fa4dd005dfd294df9dc3e", 3, 1, 2, null);
+        applyFieldFilter(filters, input, "687fa4dd005dfd294df9dc3e", 3, 1, 1, null);
         applyFieldFilter(filters, input, "66eeb5b0f53d52846e007a35", 27, 1, 51, null);
         applyFieldFilter(filters, input, "66b36b8cce042770da7218b0", 11, 1, 51, null);
         applyFieldFilter(filters, input, "66b5e34a7e23d13674f24129", 11, 1, 51, null);
@@ -326,6 +326,20 @@ public class ClueController {
         item.put("spliceType", spliceType);
         item.put("filterType", filterType);
         item.put("value", value);
+        return item;
+    }
+
+    private Map<String, Object> phoneContainsFilter(String controlId, String phone) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("controlId", controlId);
+        item.put("dataType", 3);
+        item.put("spliceType", 1);
+        item.put("filterType", 1);
+        item.put("dateRange", 0);
+        item.put("dateRangeType", 3);
+        item.put("isDynamicsource", false);
+        item.put("dynamicSource", List.of());
+        item.put("values", List.of(phone));
         return item;
     }
 }
