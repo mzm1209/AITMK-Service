@@ -20,4 +20,22 @@ public class ChatMessageRecord {
     private String message;
     /** 消息时间戳。 */
     private Instant timestamp;
+    /** 广告来源信息（Click to WhatsApp）。 */
+    private ReferralInfo referral;
+
+    @Data
+    @Builder
+    public static class ReferralInfo {
+        private String sourceUrl;
+        private String sourceId;
+        private String sourceType;
+        private String body;
+        private String headline;
+        private String mediaType;
+        private String imageUrl;
+        private String videoUrl;
+        private String thumbnailUrl;
+        private String ctwaClid;
+        private String welcomeText;
+    }
 }

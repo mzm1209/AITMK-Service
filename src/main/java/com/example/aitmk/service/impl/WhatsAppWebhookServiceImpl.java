@@ -126,8 +126,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
+            ChatMessageRecord.ReferralInfo referralInfo = buildReferralInfo(parsed);
             chatHistoryService.setCustomerNickname(customerPhone, contactName);
-            chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
+            chatHistoryService.recordCustomerMessage(customerPhone, customerContent, referralInfo);
             agentDispatchService.markCustomerMessageAt(customerPhone);
             log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
 
@@ -146,6 +147,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     .sender("customer")
                     .message(customerContent)
                     .timestamp(Instant.now())
+                    .referral(referralInfo)
                     .build();
 
             boolean assignedAgentOnline = StringUtils.hasText(assignedAgent)
@@ -249,6 +251,39 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
         }
         return "";
+    }
+
+    private ChatMessageRecord.ReferralInfo buildReferralInfo(WhatsAppMessage parsed) {
+        if (parsed == null) {
+            return null;
+        }
+        boolean hasReferral = StringUtils.hasText(parsed.getReferralSourceUrl())
+                || StringUtils.hasText(parsed.getReferralSourceId())
+                || StringUtils.hasText(parsed.getReferralSourceType())
+                || StringUtils.hasText(parsed.getReferralBody())
+                || StringUtils.hasText(parsed.getReferralHeadline())
+                || StringUtils.hasText(parsed.getReferralMediaType())
+                || StringUtils.hasText(parsed.getReferralImageUrl())
+                || StringUtils.hasText(parsed.getReferralVideoUrl())
+                || StringUtils.hasText(parsed.getReferralThumbnailUrl())
+                || StringUtils.hasText(parsed.getReferralCtaClid())
+                || StringUtils.hasText(parsed.getReferralWelcomeText());
+        if (!hasReferral) {
+            return null;
+        }
+        return ChatMessageRecord.ReferralInfo.builder()
+                .sourceUrl(parsed.getReferralSourceUrl())
+                .sourceId(parsed.getReferralSourceId())
+                .sourceType(parsed.getReferralSourceType())
+                .body(parsed.getReferralBody())
+                .headline(parsed.getReferralHeadline())
+                .mediaType(parsed.getReferralMediaType())
+                .imageUrl(parsed.getReferralImageUrl())
+                .videoUrl(parsed.getReferralVideoUrl())
+                .thumbnailUrl(parsed.getReferralThumbnailUrl())
+                .ctwaClid(parsed.getReferralCtaClid())
+                .welcomeText(parsed.getReferralWelcomeText())
+                .build();
     }
 
     private String buildCustomerContent(WhatsAppMessage parsed) {

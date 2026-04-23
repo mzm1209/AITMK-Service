@@ -30,7 +30,12 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
 
     @Override
     public void recordCustomerMessage(String customerId, String message) {
-        append(customerId, "customer", message);
+        append(customerId, "customer", message, null);
+    }
+
+    @Override
+    public void recordCustomerMessage(String customerId, String message, ChatMessageRecord.ReferralInfo referral) {
+        append(customerId, "customer", message, referral);
     }
 
     @Override
@@ -46,12 +51,12 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
 
     @Override
     public void recordAiReply(String customerId, String message) {
-        append(customerId, "ai", message);
+        append(customerId, "ai", message, null);
     }
 
     @Override
     public void recordManualReply(String customerId, String message) {
-        append(customerId, "agent", message);
+        append(customerId, "agent", message, null);
     }
 
     /**
@@ -123,7 +128,7 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
     /**
      * 统一追加消息记录。
      */
-    private void append(String customerId, String sender, String message) {
+    private void append(String customerId, String sender, String message, ChatMessageRecord.ReferralInfo referral) {
         recordsByCustomer.compute(customerId, (key, records) -> {
             List<ChatMessageRecord> updated = records == null ? new ArrayList<>() : new ArrayList<>(records);
             updated.add(ChatMessageRecord.builder()
@@ -131,6 +136,7 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                     .sender(sender)
                     .message(message)
                     .timestamp(Instant.now())
+                    .referral(referral)
                     .build());
             return updated;
         });
