@@ -21,6 +21,8 @@ import org.springframework.util.StringUtils;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -34,6 +36,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final AgentDispatchService agentDispatchService;
     private final AgentPushService agentPushService;
     private final CrmOpenApiService crmOpenApiService;
+    /** webhook 消息去重：避免 Meta 重试或重复投递导致前端收到重复推送。 */
+    private final Map<String, Long> processedMessageIds = new ConcurrentHashMap<>();
+    private static final long MESSAGE_DEDUP_TTL_MILLIS = 10 * 60 * 1000L;
 
     @Override
     @Async
@@ -83,6 +88,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private void processOneMessage(String businessAccountId, com.example.aitmk.model.webhook.Message message, String contactName) {
         try {
             WhatsAppMessage parsed = WhatsAppMessageParser.parse(message);
+            if (isDuplicateWebhook(message)) {
+                return;
+            }
             String rawCustomerPhone = parsed.getFrom();
             String customerPhone = normalizeCustomerPhone(rawCustomerPhone);
             String customerContent = buildCustomerContent(parsed);
@@ -321,6 +329,31 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             return false;
         }
         return message.getId().startsWith("wamid.manual.");
+    }
+
+    private boolean isDuplicateWebhook(com.example.aitmk.model.webhook.Message message) {
+        if (message == null || !StringUtils.hasText(message.getId())) {
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        cleanupProcessedMessageIds(now);
+        Long previous = processedMessageIds.putIfAbsent(message.getId(), now);
+        if (previous == null) {
+            return false;
+        }
+        if (now - previous <= MESSAGE_DEDUP_TTL_MILLIS) {
+            log.info("Skip duplicate webhook message. messageId={}", message.getId());
+            return true;
+        }
+        processedMessageIds.put(message.getId(), now);
+        return false;
+    }
+
+    private void cleanupProcessedMessageIds(long nowMillis) {
+        if (processedMessageIds.size() < 5000) {
+            return;
+        }
+        processedMessageIds.entrySet().removeIf(e -> nowMillis - e.getValue() > MESSAGE_DEDUP_TTL_MILLIS);
     }
 
     private void doAiReplyFlow(String businessAccountId,
