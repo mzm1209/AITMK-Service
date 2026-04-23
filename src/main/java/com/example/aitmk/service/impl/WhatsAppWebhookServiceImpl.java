@@ -98,6 +98,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
 
             String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
+            boolean simulatedWebhook = isSimulatedWebhook(message);
             long hoursFromLastCustomerMessage = lastCustomerBefore == null
                     ? -1L
                     : Duration.between(lastCustomerBefore, Instant.now()).toHours();
@@ -166,7 +167,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             if (StringUtils.hasText(assignedAgent)) {
                 // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 自动回复兜底
-                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+                doAiReplyFlow(businessAccountId, customerPhone, customerContent, simulatedWebhook);
                 return;
             }
 
@@ -184,7 +185,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             // 4) 未分配客户走 AI流程（失败不影响本地缓存）
-            doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+            doAiReplyFlow(businessAccountId, customerPhone, customerContent, simulatedWebhook);
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
             if (hasOnlineAgent) {
@@ -315,7 +316,17 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
     }
 
-    private void doAiReplyFlow(String businessAccountId, String customerPhone, String customerContent) {
+    private boolean isSimulatedWebhook(com.example.aitmk.model.webhook.Message message) {
+        if (message == null || !StringUtils.hasText(message.getId())) {
+            return false;
+        }
+        return message.getId().startsWith("wamid.manual.");
+    }
+
+    private void doAiReplyFlow(String businessAccountId,
+                               String customerPhone,
+                               String customerContent,
+                               boolean simulatedWebhook) {
         try {
             String aiReplyJson = aiService.chat(customerContent);
             String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
@@ -323,7 +334,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             chatHistoryService.recordAiReply(customerPhone, aiAnswer);
             log.info("Local history recorded for AI reply. customer={}", customerPhone);
 
-            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+            if (simulatedWebhook) {
+                log.info("Skip Meta send for simulated webhook message. customer={}", customerPhone);
+            } else {
+                sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+            }
 
             try {
                 boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
