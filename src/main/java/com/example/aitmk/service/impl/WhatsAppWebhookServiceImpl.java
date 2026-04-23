@@ -143,7 +143,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 2) CRM记录失败不影响主流程（但必须有明确日志）
             try {
-                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, assignedAgent, "客户", customerContent);
+                boolean crmOk = crmOpenApiService.addChatRecord(
+                        businessAccountId, customerPhone, assignedAgent, "客户", customerContent, contactName
+                );
                 if (!crmOk) {
                     log.warn("CRM add customer chat record returned false. customer={}, assignedAgent={}", customerPhone, assignedAgent);
                 }
@@ -187,7 +189,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
             try {
                 String reason = hasOnlineAgent ? "首次会话" : "非工作日";
-                crmOpenApiService.openAiReception(customerPhone, reason);
+                crmOpenApiService.openAiReception(customerPhone, reason, contactName);
             } catch (Exception ex) {
                 log.warn("Open AI reception failed. customer={}", customerPhone, ex);
             }
@@ -200,7 +202,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 agentDispatchService.assignIfAbsent(customerPhone).ifPresentOrElse(agentRowId -> {
                     log.info("Customer assigned locally. customer={}, agent={}", customerPhone, agentRowId);
                     try {
-                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中", contactName);
                         if (!crmOk) {
                             log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
                         }

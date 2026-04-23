@@ -42,6 +42,7 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
             Set<String> onlineAgents = new LinkedHashSet<>(crmOpenApiService.listOnlineAgents());
             List<AssignmentRecord> assignments = crmOpenApiService.listAssignments();
             List<CrmChatRecord> chats = crmOpenApiService.listChatRecords();
+            Map<String, String> customerNicknames = new HashMap<>(crmOpenApiService.listCustomerNicknames());
 
             Map<String, String> assignmentMap = new HashMap<>();
             assignments.forEach(a -> assignmentMap.put(a.getCustomerPhone(), a.getAgentRowId()));
@@ -49,6 +50,9 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
 
             Map<String, List<ChatMessageRecord>> historyMap = new HashMap<>();
             for (CrmChatRecord c : chats) {
+                if (c.getCustomerNickname() != null && !c.getCustomerNickname().isBlank()) {
+                    customerNicknames.putIfAbsent(c.getCustomerPhone(), c.getCustomerNickname().trim());
+                }
                 historyMap.compute(c.getCustomerPhone(), (k, v) -> {
                     List<ChatMessageRecord> list = v == null ? new ArrayList<>() : v;
                     list.add(ChatMessageRecord.builder()
@@ -61,6 +65,7 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
                 });
             }
             chatHistoryService.replaceAll(historyMap);
+            customerNicknames.forEach(chatHistoryService::setCustomerNickname);
 
             // 重建未分配队列：在本地有会话但CRM分配表无绑定的客户，标记为待分配
             historyMap.keySet().forEach(customer -> {

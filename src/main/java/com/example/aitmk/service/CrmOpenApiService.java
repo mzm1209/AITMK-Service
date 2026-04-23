@@ -24,6 +24,7 @@ public interface CrmOpenApiService {
     boolean updateAgentLoginStatus(String loginRecordRowId, String status);
 
     boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus);
+    boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus, String customerNickname);
 
     /**
      * 将该客户当前“服务中”的分配记录更新为“已关闭”。
@@ -39,9 +40,16 @@ public interface CrmOpenApiService {
                           String agentAccountRowId,
                           String sender,
                           String message);
+    boolean addChatRecord(String businessAccountId,
+                          String customerPhone,
+                          String agentAccountRowId,
+                          String sender,
+                          String message,
+                          String customerNickname);
 
     /** 写入 AI 接待池（服务中）。 */
     boolean openAiReception(String customerPhone, String reason);
+    boolean openAiReception(String customerPhone, String reason, String customerNickname);
 
     /** 将 AI 接待池中的服务状态更新为已关闭。 */
     boolean closeAiReception(String customerPhone);
@@ -101,6 +109,7 @@ public interface CrmOpenApiService {
     List<AssignmentRecord> listAssignments();
 
     List<CrmChatRecord> listChatRecords();
+    Map<String, String> listCustomerNicknames();
 
     Set<String> listOnlineAgents();
 
