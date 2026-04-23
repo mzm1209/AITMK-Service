@@ -58,6 +58,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String CHAT_SEND_TIME_CONTROL_ID = "69abbfff433ec9f4b5e6d227";
     private static final String CHAT_CONTENT_CONTROL_ID = "69abbfff433ec9f4b5e6d228";
     private static final String CHAT_CUSTOMER_NICKNAME_CONTROL_ID = "69e9e3bb3761e74db9f02963";
+    private static final String CHAT_AD_CONTENT_CONTROL_ID = "69e9e85c3761e74db9f029d6";
     private static final String AI_POOL_WORKSHEET_ID = "aijdc";
     private static final String AI_POOL_CUSTOMER_PHONE_CONTROL_ID = "69cb3e3b433ec9f4b5e80433";
     private static final String AI_POOL_ASSIGN_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80476";
@@ -301,12 +302,26 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                                  String sender,
                                  String message,
                                  String customerNickname) {
+        return addChatRecord(businessAccountId, customerPhone, agentAccountRowId, sender, message, customerNickname, null);
+    }
+
+    @Override
+    public boolean addChatRecord(String businessAccountId,
+                                 String customerPhone,
+                                 String agentAccountRowId,
+                                 String sender,
+                                 String message,
+                                 String customerNickname,
+                                 String adContent) {
         String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(control(CHAT_BUSINESS_ACCOUNT_CONTROL_ID, businessAccountId));
         controls.add(control(CHAT_CUSTOMER_PHONE_CONTROL_ID, customerPhone));
         if (customerNickname != null && !customerNickname.isBlank()) {
             controls.add(control(CHAT_CUSTOMER_NICKNAME_CONTROL_ID, customerNickname.trim()));
+        }
+        if (adContent != null && !adContent.isBlank()) {
+            controls.add(control(CHAT_AD_CONTENT_CONTROL_ID, adContent));
         }
         if (normalizedAgentRowId != null && !normalizedAgentRowId.isBlank()) {
             controls.add(control(CHAT_AGENT_CONTROL_ID, normalizedAgentRowId));
@@ -577,6 +592,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     .agentRowId(extractAsText(row, CHAT_AGENT_CONTROL_ID))
                     .sender(normalizeSender(extractAsText(row, CHAT_SENDER_CONTROL_ID)))
                     .content(extractAsText(row, CHAT_CONTENT_CONTROL_ID))
+                    .adContent(extractAsText(row, CHAT_AD_CONTENT_CONTROL_ID))
                     .sendTime(parseCrmTime(extractAsText(row, CHAT_SEND_TIME_CONTROL_ID)))
                     .build());
         });

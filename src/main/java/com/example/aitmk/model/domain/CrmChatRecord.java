@@ -15,5 +15,6 @@ public class CrmChatRecord {
     private String agentRowId;
     private String sender;
     private String content;
+    private String adContent;
     private Instant sendTime;
 }

@@ -46,6 +46,13 @@ public interface CrmOpenApiService {
                           String sender,
                           String message,
                           String customerNickname);
+    boolean addChatRecord(String businessAccountId,
+                          String customerPhone,
+                          String agentAccountRowId,
+                          String sender,
+                          String message,
+                          String customerNickname,
+                          String adContent);
 
     /** 写入 AI 接待池（服务中）。 */
     boolean openAiReception(String customerPhone, String reason);

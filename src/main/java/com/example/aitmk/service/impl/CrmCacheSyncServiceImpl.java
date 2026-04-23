@@ -7,6 +7,7 @@ import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.CacheSyncService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +31,7 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
     private final CrmOpenApiService crmOpenApiService;
     private final AgentDispatchService agentDispatchService;
     private final ChatHistoryService chatHistoryService;
+    private final ObjectMapper objectMapper;
 
     @PostConstruct
     public void init() {
@@ -60,6 +62,7 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
                             .sender(c.getSender())
                             .message(c.getContent())
                             .timestamp(c.getSendTime())
+                            .referral(parseReferralInfo(c.getAdContent()))
                             .build());
                     return list;
                 });
@@ -79,6 +82,18 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
                     Math.max(historyMap.size() - assignmentMap.size(), 0));
         } catch (Exception e) {
             log.error("CRM cache sync failed", e);
+        }
+    }
+
+    private ChatMessageRecord.ReferralInfo parseReferralInfo(String adContent) {
+        if (adContent == null || adContent.isBlank()) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(adContent, ChatMessageRecord.ReferralInfo.class);
+        } catch (Exception ex) {
+            log.warn("Parse adContent to referral info failed. adContent={}", adContent, ex);
+            return null;
         }
     }
 }

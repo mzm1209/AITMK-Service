@@ -143,8 +143,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 2) CRM记录失败不影响主流程（但必须有明确日志）
             try {
+                String adContent = toAdContent(referralInfo);
                 boolean crmOk = crmOpenApiService.addChatRecord(
-                        businessAccountId, customerPhone, assignedAgent, "客户", customerContent, contactName
+                        businessAccountId, customerPhone, assignedAgent, "客户", customerContent, contactName, adContent
                 );
                 if (!crmOk) {
                     log.warn("CRM add customer chat record returned false. customer={}, assignedAgent={}", customerPhone, assignedAgent);
@@ -324,6 +325,18 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
         String normalized = text.replaceAll("\\s+", " ");
         return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
+    }
+
+    private String toAdContent(ChatMessageRecord.ReferralInfo referralInfo) {
+        if (referralInfo == null) {
+            return null;
+        }
+        try {
+            return objectMapper.writeValueAsString(referralInfo);
+        } catch (Exception ex) {
+            log.warn("Serialize referral adContent failed", ex);
+            return null;
+        }
     }
 
     private boolean isSimulatedWebhook(com.example.aitmk.model.webhook.Message message) {
