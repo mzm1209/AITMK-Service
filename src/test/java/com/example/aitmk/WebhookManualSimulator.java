@@ -58,7 +58,7 @@ public class WebhookManualSimulator {
     private static String buildPayload(String from, String phoneNumberId, boolean withReferral, int index) {
         String ts = String.valueOf(Instant.now().getEpochSecond());
         String msgId = "wamid.manual." + ts + "." + index;
-        String textBody = index == 1 ? "I want to learn more" : "follow-up message " + index;
+        String textBody = index == 1 ? "I want to learn more1" : "follow-up message " + index;
         String referralJson = withReferral
                 ? """
                                 ,"referral": {
