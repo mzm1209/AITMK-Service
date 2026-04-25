@@ -16,6 +16,7 @@ public class WhatsAppValue {
     private List<Status> statuses;
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Metadata {
         private String display_phone_number;
         private String phone_number_id;
@@ -32,6 +33,7 @@ public class WhatsAppValue {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Profile {
         private String name;
     }
