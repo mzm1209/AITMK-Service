@@ -22,10 +22,13 @@ public class WhatsAppValue {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Contact {
         private Profile profile;
         private String wa_id;
         private String identity_key_hash;
+        /** 新版 payload 可能携带的用户标识。 */
+        private String user_id;
     }
 
     @Data
