@@ -9,6 +9,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +34,7 @@ import java.util.Map;
 public class ClueController {
 
     private final CrmOpenApiService crmOpenApiService;
+    private static final String PHONE_CONTROL_ID = "66bdb9a46e5c3bc8e0c7df9a";
 
     /**
      * 默认使用线索管理表 worksheetId，可通过配置覆盖。
@@ -116,6 +118,48 @@ public class ClueController {
         ));
     }
 
+    /**
+     * 避免 GET /query 被误用为详情接口（/{rowId}）。
+     */
+    @GetMapping("/query")
+    public ResponseEntity<?> queryByGetNotAllowed() {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of(
+                "success", false,
+                "message", "该接口仅支持 POST + JSON Body，请使用 /api/leads/clues/query 进行查询"
+        ));
+    }
+
+    /**
+     * 通过手机号查询线索，屏蔽前端对 filters body 的拼装细节。
+     */
+    @GetMapping("/query/phone")
+    public ResponseEntity<?> queryByPhone(@RequestParam("phone") String phone,
+                                          @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
+                                          @RequestParam(value = "pageIndex", defaultValue = "1") int pageIndex) {
+        if (!StringUtils.hasText(phone)) {
+            return ResponseEntity.badRequest().body(Map.of(
+                    "success", false,
+                    "message", "phone 不能为空"
+            ));
+        }
+        List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 2, 1, 2));
+        JsonNode root = crmOpenApiService.frontendGetFilterRows(
+                clueWorksheetId,
+                filters,
+                pageSize,
+                pageIndex,
+                0,
+                List.of()
+        );
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return ResponseEntity.badRequest().body(failBody("按手机号查询线索失败", root));
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "total", root.path("data").path("total").asInt(0),
+                "rows", root.path("data").path("rows")
+        ));
+    }
 
 
     /**
@@ -139,6 +183,17 @@ public class ClueController {
                 "success", true,
                 "total", root.path("data").path("total").asInt(0),
                 "rows", root.path("data").path("rows")
+        ));
+    }
+
+    /**
+     * 返回可读错误提示，避免默认 405 页面不明确。
+     */
+    @GetMapping("/query/fields")
+    public ResponseEntity<?> queryByFieldsGetNotAllowed() {
+        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED).body(Map.of(
+                "success", false,
+                "message", "该接口仅支持 POST + JSON Body，请使用 /api/leads/clues/query/fields 进行查询"
         ));
     }
 
