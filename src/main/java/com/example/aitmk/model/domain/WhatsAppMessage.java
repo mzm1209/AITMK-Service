@@ -24,7 +24,13 @@ public class WhatsAppMessage {
     /** Click to WhatsApp 广告来源字段。 */
     private String referralSourceType;
     private String referralSourceId;
+    private String referralSourceUrl;
     private String referralHeadline;
     private String referralBody;
+    private String referralMediaType;
+    private String referralImageUrl;
+    private String referralVideoUrl;
+    private String referralThumbnailUrl;
     private String referralCtaClid;
+    private String referralWelcomeText;
 }

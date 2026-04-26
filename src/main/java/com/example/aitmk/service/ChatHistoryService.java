@@ -16,6 +16,8 @@ public interface ChatHistoryService {
 
     /** 记录客户发来的消息。 */
     void recordCustomerMessage(String customerId, String message);
+    /** 记录客户发来的消息（含广告来源信息）。 */
+    void recordCustomerMessage(String customerId, String message, ChatMessageRecord.ReferralInfo referral);
 
     /** 更新客户昵称。 */
     void setCustomerNickname(String customerId, String nickname);

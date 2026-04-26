@@ -62,9 +62,17 @@ public class WhatsAppMessageParser {
         if (msg.getReferral() != null) {
             builder.referralSourceType(msg.getReferral().getSource_type())
                     .referralSourceId(msg.getReferral().getSource_id())
+                    .referralSourceUrl(msg.getReferral().getSource_url())
                     .referralHeadline(msg.getReferral().getHeadline())
                     .referralBody(msg.getReferral().getBody())
-                    .referralCtaClid(msg.getReferral().getCtwa_clid());
+                    .referralMediaType(msg.getReferral().getMedia_type())
+                    .referralImageUrl(msg.getReferral().getImage_url())
+                    .referralVideoUrl(msg.getReferral().getVideo_url())
+                    .referralThumbnailUrl(msg.getReferral().getThumbnail_url())
+                    .referralCtaClid(msg.getReferral().getCtwa_clid())
+                    .referralWelcomeText(msg.getReferral().getWelcome_message() == null
+                            ? null
+                            : msg.getReferral().getWelcome_message().getText());
         }
 
         return builder.build();

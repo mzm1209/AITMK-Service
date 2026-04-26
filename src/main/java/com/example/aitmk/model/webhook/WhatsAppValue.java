@@ -16,19 +16,24 @@ public class WhatsAppValue {
     private List<Status> statuses;
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Metadata {
         private String display_phone_number;
         private String phone_number_id;
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Contact {
         private Profile profile;
         private String wa_id;
         private String identity_key_hash;
+        /** 新版 payload 可能携带的用户标识。 */
+        private String user_id;
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Profile {
         private String name;
     }

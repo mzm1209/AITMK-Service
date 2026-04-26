@@ -24,6 +24,7 @@ public interface CrmOpenApiService {
     boolean updateAgentLoginStatus(String loginRecordRowId, String status);
 
     boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus);
+    boolean addAssignmentRecord(String customerPhone, String agentAccountRowId, String serviceStatus, String customerNickname);
 
     /**
      * 将该客户当前“服务中”的分配记录更新为“已关闭”。
@@ -39,9 +40,23 @@ public interface CrmOpenApiService {
                           String agentAccountRowId,
                           String sender,
                           String message);
+    boolean addChatRecord(String businessAccountId,
+                          String customerPhone,
+                          String agentAccountRowId,
+                          String sender,
+                          String message,
+                          String customerNickname);
+    boolean addChatRecord(String businessAccountId,
+                          String customerPhone,
+                          String agentAccountRowId,
+                          String sender,
+                          String message,
+                          String customerNickname,
+                          String adContent);
 
     /** 写入 AI 接待池（服务中）。 */
     boolean openAiReception(String customerPhone, String reason);
+    boolean openAiReception(String customerPhone, String reason, String customerNickname);
 
     /** 将 AI 接待池中的服务状态更新为已关闭。 */
     boolean closeAiReception(String customerPhone);
@@ -53,6 +68,11 @@ public interface CrmOpenApiService {
      * 面向IM前端的CRM通用新增接口。
      */
     JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow);
+    JsonNode frontendAddRowWithCredential(String worksheetId,
+                                          List<Map<String, Object>> controls,
+                                          boolean triggerWorkflow,
+                                          String appKey,
+                                          String sign);
 
     /**
      * 面向IM前端的CRM通用查询接口。
@@ -63,20 +83,40 @@ public interface CrmOpenApiService {
                                    int pageIndex,
                                    int listType,
                                    List<Map<String, Object>> sortControls);
+    JsonNode frontendGetFilterRowsWithCredential(String worksheetId,
+                                                 List<Map<String, Object>> filters,
+                                                 int pageSize,
+                                                 int pageIndex,
+                                                 int listType,
+                                                 List<Map<String, Object>> sortControls,
+                                                 String appKey,
+                                                 String sign);
 
     /**
      * 面向IM前端的CRM通用更新接口。
      */
     JsonNode frontendEditRow(String worksheetId, String rowId, List<Map<String, Object>> controls, boolean triggerWorkflow);
+    JsonNode frontendEditRowWithCredential(String worksheetId,
+                                           String rowId,
+                                           List<Map<String, Object>> controls,
+                                           boolean triggerWorkflow,
+                                           String appKey,
+                                           String sign);
 
     /**
      * 面向IM前端的CRM通用删除接口。
      */
     JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow);
+    JsonNode frontendDeleteRowWithCredential(String worksheetId,
+                                             String rowId,
+                                             boolean triggerWorkflow,
+                                             String appKey,
+                                             String sign);
 
     List<AssignmentRecord> listAssignments();
 
     List<CrmChatRecord> listChatRecords();
+    Map<String, String> listCustomerNicknames();
 
     Set<String> listOnlineAgents();
 

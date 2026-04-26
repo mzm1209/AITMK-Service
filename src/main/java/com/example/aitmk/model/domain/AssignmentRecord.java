@@ -9,4 +9,5 @@ public class AssignmentRecord {
 
     private String customerPhone;
     private String agentRowId;
+    private String customerNickname;
 }

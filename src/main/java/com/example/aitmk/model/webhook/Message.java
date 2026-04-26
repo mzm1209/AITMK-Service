@@ -24,11 +24,13 @@ public class Message {
     private Referral referral;
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Text {
         private String body;
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Media {
         private String id;
         private String mime_type;
@@ -37,6 +39,7 @@ public class Message {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Location {
         private Double latitude;
         private Double longitude;
@@ -45,18 +48,21 @@ public class Message {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Button {
         private String text;
         private String payload;
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Interactive {
         private String type;
         private Reply button_reply;
         private Reply list_reply;
 
         @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
         public static class Reply {
             private String id;
             private String title;
@@ -78,6 +84,7 @@ public class Message {
         private ReferredProduct referred_product;
 
         @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
         public static class ReferredProduct {
             private String catalog_id;
             private String product_retailer_id;
@@ -100,6 +107,7 @@ public class Message {
         private WelcomeMessage welcome_message;
 
         @Data
+        @JsonIgnoreProperties(ignoreUnknown = true)
         public static class WelcomeMessage {
             private String text;
         }
