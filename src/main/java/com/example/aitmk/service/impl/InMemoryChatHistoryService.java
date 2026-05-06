@@ -79,14 +79,6 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                 .toList();
     }
 
-    @Override
-    public PageResult<ChatCustomer> listCustomersPaged(int page, int size) {
-        int safePage = Math.max(page, 1);
-        int safeSize = Math.min(Math.max(size, 1), 50);
-        List<ChatCustomer> all = listCustomers();
-        return buildPage(all, safePage, safeSize);
-    }
-
     /**
      * 返回某个客户的全部消息，拷贝新列表避免调用方误改内部状态。
      */
