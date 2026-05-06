@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -64,11 +65,18 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String AI_POOL_TRANSFER_TIME_CONTROL_ID = "69cb3ff3433ec9f4b5e80479";
 
     private static final DateTimeFormatter CRM_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-M-d HH:mm:ss");
+    private static final int CRM_PAGE_SIZE_MAX = 200;
+    private static final int CRM_CHAT_BOOTSTRAP_PAGE_SIZE = 100;
+    private static final int CRM_WEBCLIENT_MAX_IN_MEMORY_BYTES = 2 * 1024 * 1024;
 
     private final CrmConfig crmConfig;
     private final ObjectMapper objectMapper;
 
-    private final WebClient webClient = WebClient.builder().build();
+    private final WebClient webClient = WebClient.builder()
+            .exchangeStrategies(ExchangeStrategies.builder()
+                    .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(CRM_WEBCLIENT_MAX_IN_MEMORY_BYTES))
+                    .build())
+            .build();
 
     @Override
     public Optional<CrmAgentAccount> verifyLogin(String username, String password) {
@@ -471,31 +479,40 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public List<CrmChatRecord> listChatRecords() {
-        JsonNode root = getFilterRows(CHAT_WORKSHEET_ID, List.of(), 1000);
-        if (root == null || !root.path("success").asBoolean(false)) {
-            return List.of();
-        }
-
         List<CrmChatRecord> result = new ArrayList<>();
-        JsonNode rows = root.path("data").path("rows");
-        if (!rows.isArray()) {
-            return List.of();
-        }
+        int pageIndex = 1;
 
-        rows.forEach(row -> {
-            String customer = extractAsText(row, CHAT_CUSTOMER_PHONE_CONTROL_ID);
-            if (customer.isBlank()) {
-                return;
+        while (true) {
+            JsonNode root = getFilterRows(CHAT_WORKSHEET_ID, List.of(), CRM_CHAT_BOOTSTRAP_PAGE_SIZE, pageIndex);
+            if (root == null || !root.path("success").asBoolean(false)) {
+                break;
             }
-            result.add(CrmChatRecord.builder()
-                    .businessAccountId(extractAsText(row, CHAT_BUSINESS_ACCOUNT_CONTROL_ID))
-                    .customerPhone(customer)
-                    .agentRowId(extractAsText(row, CHAT_AGENT_CONTROL_ID))
-                    .sender(normalizeSender(extractAsText(row, CHAT_SENDER_CONTROL_ID)))
-                    .content(extractAsText(row, CHAT_CONTENT_CONTROL_ID))
-                    .sendTime(parseCrmTime(extractAsText(row, CHAT_SEND_TIME_CONTROL_ID)))
-                    .build());
-        });
+
+            JsonNode rows = root.path("data").path("rows");
+            if (!rows.isArray() || rows.isEmpty()) {
+                break;
+            }
+
+            rows.forEach(row -> {
+                String customer = extractAsText(row, CHAT_CUSTOMER_PHONE_CONTROL_ID);
+                if (customer.isBlank()) {
+                    return;
+                }
+                result.add(CrmChatRecord.builder()
+                        .businessAccountId(extractAsText(row, CHAT_BUSINESS_ACCOUNT_CONTROL_ID))
+                        .customerPhone(customer)
+                        .agentRowId(extractAsText(row, CHAT_AGENT_CONTROL_ID))
+                        .sender(normalizeSender(extractAsText(row, CHAT_SENDER_CONTROL_ID)))
+                        .content(extractAsText(row, CHAT_CONTENT_CONTROL_ID))
+                        .sendTime(parseCrmTime(extractAsText(row, CHAT_SEND_TIME_CONTROL_ID)))
+                        .build());
+            });
+
+            if (rows.size() < CRM_CHAT_BOOTSTRAP_PAGE_SIZE) {
+                break;
+            }
+            pageIndex++;
+        }
 
         return result;
     }
@@ -577,12 +594,16 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     private JsonNode getFilterRows(String worksheetId, List<Map<String, Object>> filters, int pageSize) {
+        return getFilterRows(worksheetId, filters, pageSize, 1);
+    }
+
+    private JsonNode getFilterRows(String worksheetId, List<Map<String, Object>> filters, int pageSize, int pageIndex) {
         Map<String, Object> body = new HashMap<>();
         body.put("appKey", crmConfig.getAppKey());
         body.put("sign", crmConfig.getSign());
         body.put("worksheetId", worksheetId);
-        body.put("pageSize", pageSize);
-        body.put("pageIndex", 1);
+        body.put("pageSize", Math.max(1, Math.min(pageSize, CRM_PAGE_SIZE_MAX)));
+        body.put("pageIndex", Math.max(1, pageIndex));
         body.put("listType", 0);
         body.put("controls", List.of());
         body.put("filters", filters);
