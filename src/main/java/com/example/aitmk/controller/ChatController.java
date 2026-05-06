@@ -4,6 +4,7 @@ import com.example.aitmk.model.domain.AgentCustomerView;
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
 import com.example.aitmk.model.domain.ManualMediaReplyRequest;
+import com.example.aitmk.model.domain.PageResult;
 import com.example.aitmk.model.domain.ManualReplyRequest;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ChatHistoryService;
@@ -78,6 +79,84 @@ public class ChatController {
         return ResponseEntity.ok(customers);
     }
 
+
+    /**
+     * 返回当前坐席会话列表（最近消息倒序），分页查询。
+     */
+    @GetMapping("/conversations")
+    public ResponseEntity<PageResult<AgentCustomerView>> conversations(@RequestParam("agentRowId") String agentRowId,
+                                                                       @RequestParam(value = "page", defaultValue = "1") int page,
+                                                                       @RequestParam(value = "size", defaultValue = "20") int size,
+                                                                       @RequestParam(value = "status", defaultValue = "all") String status,
+                                                                       @RequestParam(value = "keyword", required = false) String keyword) {
+        int safeSize = Math.min(Math.max(size, 1), 50);
+        int safePage = Math.max(page, 1);
+        sessionActivityService.touch(agentRowId);
+
+        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
+        List<AgentCustomerView> filtered = chatHistoryService.listCustomers().stream()
+                .filter(c -> statusMap.containsKey(c.getCustomerId()))
+                .map(c -> {
+                    String serviceStatus = statusMap.getOrDefault(c.getCustomerId(), "已关闭");
+                    return AgentCustomerView.builder()
+                            .customerId(c.getCustomerId())
+                            .customerNickname(c.getCustomerNickname())
+                            .lastMessage(c.getLastMessage())
+                            .lastMessageAt(c.getLastMessageAt())
+                            .serviceStatus(serviceStatus)
+                            .canReply("服务中".equals(serviceStatus))
+                            .build();
+                })
+                .filter(v -> {
+                    if (!StringUtils.hasText(status) || "all".equalsIgnoreCase(status)) {
+                        return true;
+                    }
+                    if ("serving".equalsIgnoreCase(status)) {
+                        return "服务中".equals(v.getServiceStatus());
+                    }
+                    if ("closed".equalsIgnoreCase(status)) {
+                        return "已关闭".equals(v.getServiceStatus());
+                    }
+                    return true;
+                })
+                .filter(v -> {
+                    if (!StringUtils.hasText(keyword)) {
+                        return true;
+                    }
+                    String k = keyword.trim();
+                    return v.getCustomerId().contains(k) || (v.getCustomerNickname() != null && v.getCustomerNickname().contains(k));
+                })
+                .toList();
+
+        int total = filtered.size();
+        int from = (safePage - 1) * safeSize;
+        List<AgentCustomerView> items = from >= total ? List.of() : filtered.subList(from, Math.min(from + safeSize, total));
+        return ResponseEntity.ok(PageResult.<AgentCustomerView>builder()
+                .items(items)
+                .page(safePage)
+                .size(safeSize)
+                .total(total)
+                .hasNext(from + safeSize < total)
+                .build());
+    }
+
+    /**
+     * 查询指定客户聊天记录（倒序分页），每页最多 50。
+     */
+    @GetMapping("/conversations/{customerId}/messages")
+    public ResponseEntity<?> conversationMessages(@org.springframework.web.bind.annotation.PathVariable("customerId") String customerId,
+                                                  @RequestParam("agentRowId") String agentRowId,
+                                                  @RequestParam(value = "page", defaultValue = "1") int page,
+                                                  @RequestParam(value = "size", defaultValue = "20") int size) {
+        sessionActivityService.touch(agentRowId);
+        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
+        if (!statusMap.containsKey(customerId)) {
+            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权查看该客户会话"));
+        }
+        int safeSize = Math.min(Math.max(size, 1), 50);
+        int safePage = Math.max(page, 1);
+        return ResponseEntity.ok(chatHistoryService.listMessagesPaged(customerId, safePage, safeSize, true));
+    }
     /**
      * 根据客户 ID 拉取聊天记录，记录中包含客户消息、AI 自动回复与人工回复。
      */

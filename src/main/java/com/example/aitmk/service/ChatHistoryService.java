@@ -2,11 +2,13 @@ package com.example.aitmk.service;
 
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
+import com.example.aitmk.model.domain.PageResult;
 
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+
 
 /**
  * 聊天历史服务抽象：
@@ -31,6 +33,9 @@ public interface ChatHistoryService {
 
     /** 查询指定客户的消息明细。 */
     List<ChatMessageRecord> listMessages(String customerId);
+
+    /** 分页查询指定客户消息。 */
+    PageResult<ChatMessageRecord> listMessagesPaged(String customerId, int page, int size, boolean desc);
 
     /** 获取客户最后一条“客户发送”的消息时间。 */
     Optional<Instant> lastCustomerMessageTime(String customerId);
