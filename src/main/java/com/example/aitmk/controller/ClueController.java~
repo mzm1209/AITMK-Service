@@ -142,7 +142,7 @@ public class ClueController {
                     "message", "phone 不能为空"
             ));
         }
-        List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 3, 1, 1));
+        List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 3, 1, 2));
         JsonNode root = crmOpenApiService.frontendGetFilterRows(
                 clueWorksheetId,
                 filters,
