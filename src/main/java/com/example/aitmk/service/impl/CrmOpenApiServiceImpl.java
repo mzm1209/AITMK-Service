@@ -112,23 +112,29 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     @Override
-    public Optional<String> findOnlineLoginRecordRowId(String agentAccountRowId) {
-        List<Map<String, Object>> filters = new ArrayList<>();
-        filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,24));
-        filters.add(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
+    public Optional<String> findActiveLoginRecordRowId(String agentAccountRowId) {
+        List<String> activeStatuses = List.of("在线", "挂机");
+        for (String status : activeStatuses) {
+            List<Map<String, Object>> filters = new ArrayList<>();
+            filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,24));
+            filters.add(filter(AGENT_LOGIN_STATUS_CONTROL_ID, status,11,1,2));
 
-        JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 1);
-        if (root == null || !root.path("success").asBoolean(false)) {
-            return Optional.empty();
+            JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 1);
+            if (root == null || !root.path("success").asBoolean(false)) {
+                continue;
+            }
+
+            JsonNode first = firstRow(root);
+            if (first == null) {
+                continue;
+            }
+
+            String rowId = first.path("rowid").asText("");
+            if (!rowId.isBlank()) {
+                return Optional.of(rowId);
+            }
         }
-
-        JsonNode first = firstRow(root);
-        if (first == null) {
-            return Optional.empty();
-        }
-
-        String rowId = first.path("rowid").asText("");
-        return rowId.isBlank() ? Optional.empty() : Optional.of(rowId);
+        return Optional.empty();
     }
 
     @Override

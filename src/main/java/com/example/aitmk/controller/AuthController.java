@@ -52,28 +52,19 @@ public class AuthController {
         CrmAgentAccount agent = account.get();
 
         // 防重复登录：若该坐席已有“在线”记录，则不再新增在线状态记录
-        Optional<String> onlineLoginRecord = crmOpenApiService.findOnlineLoginRecordRowId(agent.getRowId());
+        Optional<String> onlineLoginRecord = crmOpenApiService.findActiveLoginRecordRowId(agent.getRowId());
         if (onlineLoginRecord.isPresent()) {
             sessionActivityService.onLogin(agent.getRowId(), onlineLoginRecord.get());
         } else {
-            Optional<String> loginRecord = crmOpenApiService.addAgentLoginRecord(agent.getRowId(), "在线");
+            Optional<String> loginRecord = crmOpenApiService.addAgentLoginRecord(agent.getRowId(), "挂机");
             loginRecord.ifPresent(id -> sessionActivityService.onLogin(agent.getRowId(), id));
         }
 
-        agentDispatchService.markOnline(agent.getRowId());
+        // 登录默认“挂机”：不参与会话分配，待前端切换为“在线”后再参与。
+        agentDispatchService.markOffline(agent.getRowId());
         sessionActivityService.touch(agent.getRowId());
 
-        // 若存在“未分配客户”，在坐席登录后立即补分配，并推送完整历史
-        while (true) {
-            Optional<String> pending = agentDispatchService.assignOnePendingCustomerToAgent(agent.getRowId());
-            if (pending.isEmpty()) {
-                break;
-            }
-            String customerPhone = pending.get();
-            crmOpenApiService.addAssignmentRecord(customerPhone, agent.getRowId(), "服务中");
-            crmOpenApiService.assignAiReception(customerPhone);
-            agentPushService.pushHistory(agent.getRowId(), customerPhone, chatHistoryService.listMessages(customerPhone));
-        }
+        // 登录默认挂机，不主动领取待分配会话。
 
         return ResponseEntity.ok(LoginResponse.builder()
                 .success(true)
