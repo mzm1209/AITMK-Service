@@ -2,6 +2,7 @@ package com.example.aitmk.service.impl;
 
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
+import com.example.aitmk.model.domain.PageResult;
 import com.example.aitmk.service.ChatHistoryService;
 import org.springframework.stereotype.Service;
 
@@ -78,6 +79,14 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                 .toList();
     }
 
+    @Override
+    public PageResult<ChatCustomer> listCustomersPaged(int page, int size) {
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(size, 1), 50);
+        List<ChatCustomer> all = listCustomers();
+        return buildPage(all, safePage, safeSize);
+    }
+
     /**
      * 返回某个客户的全部消息，拷贝新列表避免调用方误改内部状态。
      */
@@ -85,6 +94,21 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
     public List<ChatMessageRecord> listMessages(String customerId) {
         List<ChatMessageRecord> messages = recordsByCustomer.getOrDefault(customerId, List.of());
         return new ArrayList<>(messages);
+    }
+
+    @Override
+    public PageResult<ChatMessageRecord> listMessagesPaged(String customerId, int page, int size, boolean desc) {
+        int safePage = Math.max(page, 1);
+        int safeSize = Math.min(Math.max(size, 1), 50);
+        List<ChatMessageRecord> all = listMessages(customerId).stream()
+                .sorted(Comparator.comparing(ChatMessageRecord::getTimestamp))
+                .toList();
+        if (desc) {
+            List<ChatMessageRecord> reversed = new ArrayList<>(all);
+            java.util.Collections.reverse(reversed);
+            all = reversed;
+        }
+        return buildPage(all, safePage, safeSize);
     }
 
     @Override
@@ -118,6 +142,27 @@ public class InMemoryChatHistoryService implements ChatHistoryService {
                 nicknameByCustomer.put(customerId, nickname);
             }
         });
+    }
+
+    private <T> PageResult<T> buildPage(List<T> all, int page, int size) {
+        int from = (page - 1) * size;
+        if (from >= all.size()) {
+            return PageResult.<T>builder()
+                    .items(List.of())
+                    .page(page)
+                    .size(size)
+                    .total(all.size())
+                    .hasNext(false)
+                    .build();
+        }
+        int to = Math.min(from + size, all.size());
+        return PageResult.<T>builder()
+                .items(all.subList(from, to))
+                .page(page)
+                .size(size)
+                .total(all.size())
+                .hasNext(to < all.size())
+                .build();
     }
 
     /**
