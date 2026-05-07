@@ -1,11 +1,18 @@
 package com.example.aitmk.controller;
 
+import com.example.aitmk.model.domain.AgentStatusUpdateRequest;
+import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.service.AgentPushService;
+import jakarta.validation.Valid;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,6 +35,40 @@ public class AgentStatusController {
     private static final String AGENT_STATUS_CONTROL_ID = "69abbb3e433ec9f4b5e6d085";
 
     private final CrmOpenApiService crmOpenApiService;
+    private final AgentDispatchService agentDispatchService;
+    private final AgentPushService agentPushService;
+    private final ChatHistoryService chatHistoryService;
+
+
+    @PostMapping("/update")
+    public ResponseEntity<?> updateStatus(@Valid @RequestBody AgentStatusUpdateRequest request) {
+        String status = request.getStatus().trim();
+        if (!"在线".equals(status) && !"挂机".equals(status) && !"离线".equals(status)) {
+            return ResponseEntity.badRequest().body(Map.of("success", false, "message", "仅支持 在线/挂机/离线"));
+        }
+
+        // 查最新可用登录记录，更新CRM状态
+        crmOpenApiService.findActiveLoginRecordRowId(request.getAgentRowId().trim())
+                .ifPresent(rowId -> crmOpenApiService.updateAgentLoginStatus(rowId, status));
+
+        if ("在线".equals(status)) {
+            agentDispatchService.markOnline(request.getAgentRowId().trim());
+            while (true) {
+                var pending = agentDispatchService.assignOnePendingCustomerToAgent(request.getAgentRowId().trim());
+                if (pending.isEmpty()) {
+                    break;
+                }
+                String customerPhone = pending.get();
+                crmOpenApiService.addAssignmentRecord(customerPhone, request.getAgentRowId().trim(), "服务中");
+                crmOpenApiService.assignAiReception(customerPhone);
+                agentPushService.pushHistory(request.getAgentRowId().trim(), customerPhone, chatHistoryService.listMessages(customerPhone));
+            }
+        } else {
+            agentDispatchService.markOffline(request.getAgentRowId().trim());
+        }
+
+        return ResponseEntity.ok(Map.of("success", true, "message", "状态更新成功"));
+    }
 
     @GetMapping
     public ResponseEntity<?> listStatus(@RequestParam(value = "agentRowId", required = false) String agentRowId,

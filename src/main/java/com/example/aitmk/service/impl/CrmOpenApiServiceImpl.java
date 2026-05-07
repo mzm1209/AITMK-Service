@@ -68,6 +68,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final int CRM_PAGE_SIZE_MAX = 200;
     private static final int CRM_CHAT_BOOTSTRAP_PAGE_SIZE = 100;
     private static final int CRM_WEBCLIENT_MAX_IN_MEMORY_BYTES = 2 * 1024 * 1024;
+    private static final String CLUE_WORKSHEET_ID = "leads_bank";
 
     private final CrmConfig crmConfig;
     private final ObjectMapper objectMapper;
@@ -112,23 +113,29 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     @Override
-    public Optional<String> findOnlineLoginRecordRowId(String agentAccountRowId) {
-        List<Map<String, Object>> filters = new ArrayList<>();
-        filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,24));
-        filters.add(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
+    public Optional<String> findActiveLoginRecordRowId(String agentAccountRowId) {
+        List<String> activeStatuses = List.of("在线", "挂机");
+        for (String status : activeStatuses) {
+            List<Map<String, Object>> filters = new ArrayList<>();
+            filters.add(filter(AGENT_LOGIN_ACCOUNT_CONTROL_ID, agentAccountRowId,29,1,24));
+            filters.add(filter(AGENT_LOGIN_STATUS_CONTROL_ID, status,11,1,2));
 
-        JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 1);
-        if (root == null || !root.path("success").asBoolean(false)) {
-            return Optional.empty();
+            JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 1);
+            if (root == null || !root.path("success").asBoolean(false)) {
+                continue;
+            }
+
+            JsonNode first = firstRow(root);
+            if (first == null) {
+                continue;
+            }
+
+            String rowId = first.path("rowid").asText("");
+            if (!rowId.isBlank()) {
+                return Optional.of(rowId);
+            }
         }
-
-        JsonNode first = firstRow(root);
-        if (first == null) {
-            return Optional.empty();
-        }
-
-        String rowId = first.path("rowid").asText("");
-        return rowId.isBlank() ? Optional.empty() : Optional.of(rowId);
+        return Optional.empty();
     }
 
     @Override
@@ -386,16 +393,12 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendAddRow(String worksheetId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
-        if (worksheetId == null || worksheetId.isBlank()) {
-            return null;
-        }
         List<Map<String, Object>> allControls = new ArrayList<>(controls == null ? List.of() : controls);
         if (crmConfig.getOwnerId() != null && !crmConfig.getOwnerId().isBlank()) {
             allControls.add(control("ownerid", crmConfig.getOwnerId()));
         }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        putCredential(body, worksheetId);
         body.put("worksheetId", worksheetId);
         body.put("triggerWorkflow", triggerWorkflow);
         body.put("controls", allControls);
@@ -404,34 +407,27 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendGetFilterRows(String worksheetId,
-                                          List<Map<String, Object>> filters,
-                                          int pageSize,
-                                          int pageIndex,
-                                          int listType,
-                                          List<Map<String, Object>> sortControls) {
-        if (worksheetId == null || worksheetId.isBlank()) {
-            return null;
-        }
+                                       List<Map<String, Object>> filters,
+                                       int pageSize,
+                                       int pageIndex,
+                                       int listType,
+                                       List<Map<String, Object>> sortControls) {
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        putCredential(body, worksheetId);
         body.put("worksheetId", worksheetId);
-        body.put("pageSize", pageSize <= 0 ? 50 : pageSize);
-        body.put("pageIndex", pageIndex <= 0 ? 1 : pageIndex);
-        body.put("listType", listType);
-        body.put("controls", sortControls == null ? List.of() : sortControls);
+        body.put("pageSize", Math.max(1, Math.min(pageSize, CRM_PAGE_SIZE_MAX)));
+        body.put("pageIndex", Math.max(1, pageIndex));
+        body.put("listType", Math.max(0, listType));
+        body.put("controls", List.of());
         body.put("filters", filters == null ? List.of() : filters);
+        body.put("sortControls", sortControls == null ? List.of() : sortControls);
         return post("/api/v2/open/worksheet/getFilterRows", body);
     }
 
     @Override
     public JsonNode frontendEditRow(String worksheetId, String rowId, List<Map<String, Object>> controls, boolean triggerWorkflow) {
-        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
-            return null;
-        }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        putCredential(body, worksheetId);
         body.put("worksheetId", worksheetId);
         body.put("rowId", rowId);
         body.put("triggerWorkflow", triggerWorkflow);
@@ -441,12 +437,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     @Override
     public JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow) {
-        if (worksheetId == null || worksheetId.isBlank() || rowId == null || rowId.isBlank()) {
-            return null;
-        }
         Map<String, Object> body = new HashMap<>();
-        body.put("appKey", crmConfig.getAppKey());
-        body.put("sign", crmConfig.getSign());
+        putCredential(body, worksheetId);
         body.put("worksheetId", worksheetId);
         body.put("rowId", rowId);
         body.put("triggerWorkflow", triggerWorkflow);
@@ -629,6 +621,21 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private JsonNode firstRow(JsonNode root) {
         JsonNode rows = root.path("data").path("rows");
         return rows.isArray() && rows.size() > 0 ? rows.get(0) : null;
+    }
+
+    private void putCredential(Map<String, Object> body, String worksheetId) {
+        if (CLUE_WORKSHEET_ID.equals(worksheetId)
+                && crmConfig.getClue() != null
+                && crmConfig.getClue().getAppKey() != null
+                && !crmConfig.getClue().getAppKey().isBlank()
+                && crmConfig.getClue().getSign() != null
+                && !crmConfig.getClue().getSign().isBlank()) {
+            body.put("appKey", crmConfig.getClue().getAppKey());
+            body.put("sign", crmConfig.getClue().getSign());
+            return;
+        }
+        body.put("appKey", crmConfig.getAppKey());
+        body.put("sign", crmConfig.getSign());
     }
 
     private JsonNode post(String path, Object body) {
