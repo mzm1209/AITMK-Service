@@ -16,4 +16,11 @@ public class CrmConfig {
     private String appKey;
     private String sign;
     private String ownerId;
+    private Clue clue = new Clue();
+
+    @Data
+    public static class Clue {
+        private String appKey;
+        private String sign;
+    }
 }

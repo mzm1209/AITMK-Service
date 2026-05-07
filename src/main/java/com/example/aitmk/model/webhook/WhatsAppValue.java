@@ -22,10 +22,13 @@ public class WhatsAppValue {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Contact {
         private Profile profile;
         private String wa_id;
         private String identity_key_hash;
+        /** 新版字段：联系人关联用户ID（可为空） */
+        private String user_id;
     }
 
     @Data
@@ -40,6 +43,8 @@ public class WhatsAppValue {
         private String status;
         private String timestamp;
         private String recipient_id;
+        /** 新版字段：接收方关联用户ID（可为空） */
+        private String recipient_user_id;
         /** 兼容对象结构：{id,origin,expiration_timestamp,...} */
         private JsonNode conversation;
         /** 兼容对象结构：{billable,pricing_model,category,...} */

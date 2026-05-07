@@ -14,8 +14,8 @@ public interface CrmOpenApiService {
 
     Optional<CrmAgentAccount> verifyLogin(String username, String password);
 
-    /** 查询当前坐席是否已有在线状态记录（返回在线记录rowId）。 */
-    Optional<String> findOnlineLoginRecordRowId(String agentAccountRowId);
+    /** 查询当前坐席是否已有可用登录记录（在线/挂机，返回记录rowId）。 */
+    Optional<String> findActiveLoginRecordRowId(String agentAccountRowId);
 
     /** 写登录记录，返回记录 rowId（用于后续更新离线状态）。 */
     Optional<String> addAgentLoginRecord(String agentAccountRowId, String status);
