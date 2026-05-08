@@ -10,6 +10,8 @@ import com.example.aitmk.service.AiService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.AutoReplyScriptCacheService;
+import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.WhatsAppWebhookService;
 import com.example.aitmk.util.AiReplyParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -34,6 +36,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final AgentDispatchService agentDispatchService;
     private final AgentPushService agentPushService;
     private final CrmOpenApiService crmOpenApiService;
+    private final AutoReplyScriptCacheService autoReplyScriptCacheService;
+    private final WorkTimeService workTimeService;
 
     @Override
     @Async
@@ -181,8 +185,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.warn("Open AI reception failed. customer={}", customerPhone, ex);
             }
 
-            // 4) 未分配客户走 AI流程（失败不影响本地缓存）
-            doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+            // 4) 未分配客户：首次回复优先按自动话术
+            doFirstReplyByScript(businessAccountId, customerPhone);
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
             if (hasOnlineAgent) {
@@ -209,8 +213,28 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     log.warn("Assign failed unexpectedly, fallback mark pending. customer={}", customerPhone);
                 });
             }
+
+            // 6) 无在线坐席：由 AI 接待兜底
+            if (!hasOnlineAgent) {
+                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+            }
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);
+        }
+    }
+
+
+    private void doFirstReplyByScript(String businessAccountId, String customerPhone) {
+        String script = autoReplyScriptCacheService.firstReplyScript();
+        if (!StringUtils.hasText(script)) {
+            return;
+        }
+        try {
+            chatHistoryService.recordAiReply(customerPhone, script);
+            sendService.sendTextMessage(businessAccountId, customerPhone, script);
+            crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", script);
+        } catch (Exception ex) {
+            log.error("Auto-script first reply failed. customer={}", customerPhone, ex);
         }
     }
 
@@ -298,6 +322,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             } catch (Exception ex) {
                 log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
             }
+
         } catch (Exception ex) {
             log.error("AI reply flow failed. customer={}", customerPhone, ex);
         }
