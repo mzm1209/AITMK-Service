@@ -29,11 +29,14 @@ public class Message {
     }
 
     @Data
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Media {
         private String id;
         private String mime_type;
         private String sha256;
         private String url;
+        /** WhatsApp audio payload may include voice=true for voice notes. */
+        private Boolean voice;
     }
 
     @Data
