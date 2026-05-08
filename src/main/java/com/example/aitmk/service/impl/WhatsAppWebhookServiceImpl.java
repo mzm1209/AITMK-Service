@@ -214,9 +214,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 });
             }
 
-            // 6) 非工作时间且无在线坐席：由 AI 接待
-            boolean workingNow = workTimeService.isWorkingTimeNow();
-            if (!workingNow && !hasOnlineAgent) {
+            // 6) 无在线坐席：由 AI 接待兜底
+            if (!hasOnlineAgent) {
                 doAiReplyFlow(businessAccountId, customerPhone, customerContent);
             }
         } catch (Exception ex) {
@@ -324,9 +323,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
             }
 
-            // 6) 非工作时间且无在线坐席：由 AI 接待
-            boolean workingNow = workTimeService.isWorkingTimeNow();
-            if (!workingNow && !hasOnlineAgent) {
+            // 6) 无在线坐席：由 AI 接待兜底
+            if (!hasOnlineAgent) {
                 doAiReplyFlow(businessAccountId, customerPhone, customerContent);
             }
         } catch (Exception ex) {
