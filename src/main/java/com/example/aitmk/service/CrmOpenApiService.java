@@ -85,4 +85,7 @@ public interface CrmOpenApiService {
 
     /** 查询某坐席当前“服务中”的客户电话列表。 */
     Set<String> listServingCustomerPhones(String agentAccountRowId);
+
+    /** 查询客户当前“服务中”记录对应坐席（按分配时间取最新）。 */
+    Optional<String> findServingAgentRowId(String customerPhone);
 }

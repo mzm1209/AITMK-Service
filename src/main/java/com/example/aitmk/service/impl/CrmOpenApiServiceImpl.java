@@ -565,6 +565,43 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     @Override
+    public Optional<String> findServingAgentRowId(String customerPhone) {
+        if (customerPhone == null || customerPhone.isBlank()) {
+            return Optional.empty();
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(ASSIGN_SERVICE_STATUS_CONTROL_ID, "服务中", 11, 1, 2)
+        );
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, filters, 500);
+        if (root == null || !root.path("success").asBoolean(false)) {
+            return Optional.empty();
+        }
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) {
+            return Optional.empty();
+        }
+
+        JsonNode target = null;
+        Instant latest = Instant.EPOCH;
+        for (JsonNode row : rows) {
+            Instant t = parseCrmTime(extractAsText(row, ASSIGN_TIME_CONTROL_ID));
+            if (target == null || t.isAfter(latest)) {
+                target = row;
+                latest = t;
+            }
+        }
+        if (target == null) {
+            return Optional.empty();
+        }
+        String agentRowId = extractAsText(target, ASSIGN_AGENT_CONTROL_ID);
+        if (agentRowId == null || agentRowId.isBlank()) {
+            return Optional.empty();
+        }
+        return Optional.of(normalizeRelationRowId(agentRowId));
+    }
+
+    @Override
     public Set<String> listOnlineAgents() {
         List<Map<String, Object>> filters = List.of(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
         JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 500);

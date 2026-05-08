@@ -71,7 +71,9 @@ public class SessionTransferController {
     public ResponseEntity<?> transfer(@Valid @RequestBody SessionTransferRequest request) {
         String customerPhone = request.getCustomerPhone().trim();
         String target = request.getTargetAgentRowId().trim();
-        String current = agentDispatchService.getAssignedAgent(customerPhone).orElse(null);
+        String current = crmOpenApiService.findServingAgentRowId(customerPhone)
+                .or(() -> agentDispatchService.getAssignedAgent(customerPhone))
+                .orElse(null);
         if (!StringUtils.hasText(current)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "客户当前无已分配坐席"));
         }
