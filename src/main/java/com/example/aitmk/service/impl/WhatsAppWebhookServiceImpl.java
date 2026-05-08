@@ -323,10 +323,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
             }
 
-            // 6) 无在线坐席：由 AI 接待兜底
-            if (!hasOnlineAgent) {
-                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
-            }
         } catch (Exception ex) {
             log.error("AI reply flow failed. customer={}", customerPhone, ex);
         }
