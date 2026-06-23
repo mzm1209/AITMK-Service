@@ -3,6 +3,7 @@ package com.example.aitmk.service.impl;
 import com.example.aitmk.model.entity.*;
 import com.example.aitmk.model.entity.PersistenceEnums.*;
 import com.example.aitmk.repository.*;
+import com.example.aitmk.service.AgentPresenceService;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.AssignmentPersistenceService;
 import com.example.aitmk.service.v2.RealtimeEventService;
@@ -32,14 +33,14 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     private final AssignmentRecordRepository assignments;
     private final RealtimeEventService events;
     private final RealtimePayloadFactory payloads;
-    private final Set<String> onlineAgents = Collections.synchronizedSet(new LinkedHashSet<>());
+    private final AgentPresenceService presenceService;
     private final Map<String, AgentProfile> profiles = new ConcurrentHashMap<>();
     private final AtomicInteger roundRobin = new AtomicInteger();
     private static final EnumSet<ConversationStatus> ACTIVE = EnumSet.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE);
 
-    @Override public void markOnline(String id) { if (StringUtils.hasText(id)) onlineAgents.add(id.trim()); }
-    @Override public void markOffline(String id) { if (StringUtils.hasText(id)) onlineAgents.remove(id.trim()); }
-    @Override public boolean hasOnlineAgent() { return !onlineAgents.isEmpty(); }
+    @Override public void markOnline(String id) { if (StringUtils.hasText(id)) presenceService.changeStatus(id.trim(), com.example.aitmk.service.AgentPresence.ONLINE); }
+    @Override public void markOffline(String id) { if (StringUtils.hasText(id)) presenceService.changeStatus(id.trim(), com.example.aitmk.service.AgentPresence.OFFLINE); }
+    @Override public boolean hasOnlineAgent() { return !presenceService.assignableAgents().isEmpty(); }
     @Override @Transactional(readOnly = true) public Optional<String> getAssignedAgent(String phone) { return currentAgent(phone); }
 
     @Override @Transactional
@@ -84,12 +85,15 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         return assignLocked(locked, agent.trim(), AssignType.AUTO, "SYSTEM").map(ignored -> locked.getCustomerPhone());
     }
 
-    @Override public Set<String> onlineAgentsSnapshot() { synchronized (onlineAgents) { return new LinkedHashSet<>(onlineAgents); } }
+    @Override public Set<String> onlineAgentsSnapshot() { return presenceService.assignableAgents(); }
     @Override @Transactional(readOnly = true) public Map<String, String> assignmentsSnapshot() { return currentAssignments(); }
 
     @Override public void replaceState(Set<String> online, Map<String, String> ignoredCrmAssignments) {
-        onlineAgents.clear();
-        if (online != null) online.stream().filter(StringUtils::hasText).map(String::trim).forEach(onlineAgents::add);
+        // Online status is now managed by presenceService.
+        if (online != null) {
+            online.stream().filter(StringUtils::hasText).map(String::trim)
+                    .forEach(id -> presenceService.changeStatus(id, com.example.aitmk.service.AgentPresence.ONLINE));
+        }
         if (ignoredCrmAssignments != null && !ignoredCrmAssignments.isEmpty())
             log.info("Ignored {} CRM assignments because local database is authoritative", ignoredCrmAssignments.size());
     }
@@ -190,7 +194,7 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         return resources.findByCustomerPhoneForUpdate(phone).orElseGet(() -> { ResourceEntity r = new ResourceEntity(); r.setCustomerPhone(phone); r.setSourceExternalId(phone); return resources.saveAndFlush(r); });
     }
     private String selectAgent() {
-        List<String> candidates; synchronized (onlineAgents) { candidates = new ArrayList<>(onlineAgents); }
+        List<String> candidates = new ArrayList<>(presenceService.assignableAgents());
         candidates.removeIf(agent -> assignments.findByAgentIdAndStatus(agent, AssignmentStatus.SERVING).size() >= profiles.getOrDefault(agent, new AgentProfile("中级", 1, 8)).maxLoad());
         if (candidates.isEmpty()) return null;
         return candidates.get(Math.floorMod(roundRobin.getAndIncrement(), candidates.size()));

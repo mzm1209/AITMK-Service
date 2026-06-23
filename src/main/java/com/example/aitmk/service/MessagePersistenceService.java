@@ -15,5 +15,8 @@ public interface MessagePersistenceService {
     long createOutgoing(String customerPhone, String businessAccountId, SenderType senderType, String senderId,
                         String operatorRole, MessageType messageType, String content, String mediaId, String mediaUrl, String mimeType);
     void markOutgoingSent(long localMessageId, String externalMessageId, Instant sentAt);
-    void markOutgoingFailed(long localMessageId, String failureReason, Instant failedAt);
+    void markOutgoingFailed(long localMessageId, String failureReason, Instant failedAt, String failureCode);
+    default void markOutgoingFailed(long localMessageId, String failureReason, Instant failedAt) {
+        markOutgoingFailed(localMessageId, failureReason, failedAt, null);
+    }
 }

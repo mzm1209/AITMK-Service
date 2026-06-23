@@ -10,7 +10,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 跟踪坐席最近一次Web活跃时间与登录记录ID，用于无操作自动离线。
+ *
+ * @deprecated 已由 {@link com.example.aitmk.service.AgentPresenceService} 取代。
  */
+@Deprecated
 @Service
 public class AgentSessionActivityService {
 

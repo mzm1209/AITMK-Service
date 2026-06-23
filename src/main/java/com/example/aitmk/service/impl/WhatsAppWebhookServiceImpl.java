@@ -14,6 +14,11 @@ import com.example.aitmk.service.AutoReplyScriptCacheService;
 import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.WhatsAppWebhookService;
 import com.example.aitmk.service.MessagePersistenceService;
+import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.repository.ConversationRepository;
+import com.example.aitmk.model.entity.PersistenceEnums.ConversationStatus;
+import com.example.aitmk.model.entity.ResourceEntity;
+import com.example.aitmk.model.entity.ConversationEntity;
 import com.example.aitmk.model.entity.PersistenceEnums.SentStatus;
 import com.example.aitmk.model.entity.PersistenceEnums.SenderType;
 import com.example.aitmk.model.entity.PersistenceEnums.MessageType;
@@ -44,6 +49,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final WorkTimeService workTimeService;
     private final MessagePersistenceService messagePersistenceService;
     private final InboundMessageRetryService inboundMessageRetryService;
+    private final AiOrchestrationService aiOrchestrationService;
+    private final ConversationRepository conversationRepository;
+    private final ResourceRepository resourceRepository;
 
     @Override
     @Async
@@ -185,8 +193,15 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             if (StringUtils.hasText(assignedAgent)) {
-                // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 自动回复兜底
-                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
+                // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 接待状态机
+                ConversationEntity conversation = conversationRepository.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(
+                        resourceRepository.findByCustomerPhone(customerPhone).map(ResourceEntity::getId).orElse(null),
+                        java.util.List.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE)
+                ).orElse(null);
+                ResourceEntity resource = resourceRepository.findByCustomerPhone(customerPhone).orElse(null);
+                if (conversation != null && resource != null) {
+                    aiOrchestrationService.orchestrate(businessAccountId, customerPhone, customerContent, conversation, resource);
+                }
                 return;
             }
 
@@ -203,8 +218,15 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 log.warn("Open AI reception failed. customer={}", customerPhone, ex);
             }
 
-            // 4) 未分配客户：首次回复优先按自动话术
-            doFirstReplyByScript(businessAccountId, customerPhone);
+            // 4) 未分配客户：使用 AI 接待状态机取代独立的话术回复
+            ConversationEntity conversation = conversationRepository.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(
+                    resourceRepository.findByCustomerPhone(customerPhone).map(ResourceEntity::getId).orElse(null),
+                    java.util.List.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE)
+            ).orElse(null);
+            ResourceEntity resource = resourceRepository.findByCustomerPhone(customerPhone).orElse(null);
+            if (conversation != null && resource != null) {
+                aiOrchestrationService.orchestrate(businessAccountId, customerPhone, customerContent, conversation, resource);
+            }
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
             if (hasOnlineAgent) {
@@ -230,11 +252,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     agentDispatchService.markUnassigned(customerPhone);
                     log.warn("Assign failed unexpectedly, fallback mark pending. customer={}", customerPhone);
                 });
-            }
-
-            // 6) 无在线坐席：由 AI 接待兜底
-            if (!hasOnlineAgent) {
-                doAiReplyFlow(businessAccountId, customerPhone, customerContent);
             }
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);
@@ -269,20 +286,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     }
 
 
-    private void doFirstReplyByScript(String businessAccountId, String customerPhone) {
-        String script = autoReplyScriptCacheService.firstReplyScript();
-        if (!StringUtils.hasText(script)) {
-            return;
-        }
-        try {
-            long localMessageId = messagePersistenceService.createOutgoing(customerPhone, businessAccountId,
-                    SenderType.AI, null, null, MessageType.TEXT, script, null, null, null);
-            sendService.sendTextMessage(businessAccountId, customerPhone, script, localMessageId);
-            crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", script);
-        } catch (Exception ex) {
-            log.error("Auto-script first reply failed. customer={}", customerPhone, ex);
-        }
-    }
+
 
     private String lookupAssignedAgent(String rawCustomerPhone, String normalizedCustomerPhone) {
         if (StringUtils.hasText(rawCustomerPhone)) {
@@ -350,28 +354,5 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         return normalized.length() > 800 ? normalized.substring(0, 800) + "...(truncated)" : normalized;
     }
 
-    private void doAiReplyFlow(String businessAccountId, String customerPhone, String customerContent) {
-        try {
-            String aiReplyJson = aiService.chat(customerContent);
-            String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
 
-            long localMessageId = messagePersistenceService.createOutgoing(customerPhone, businessAccountId,
-                    SenderType.AI, null, null, MessageType.TEXT, aiAnswer, null, null, null);
-            log.info("Local history recorded for AI reply. customer={}", customerPhone);
-
-            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer, localMessageId);
-
-            try {
-                boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);
-                if (!crmOk) {
-                    log.warn("CRM add AI chat record returned false. customer={}", customerPhone);
-                }
-            } catch (Exception ex) {
-                log.error("CRM add AI chat record failed. customer={}", customerPhone, ex);
-            }
-
-        } catch (Exception ex) {
-            log.error("AI reply flow failed. customer={}", customerPhone, ex);
-        }
-    }
 }

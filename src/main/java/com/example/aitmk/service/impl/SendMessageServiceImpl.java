@@ -232,7 +232,30 @@ public class SendMessageServiceImpl implements SendMessageService {
                 })
                 .doOnError(err -> {
                     log.error("WhatsApp {} error", actionName, err);
-                    if (localMessageId != null) messagePersistenceService.markOutgoingFailed(localMessageId, err.getMessage(), Instant.now());
+                    if (localMessageId != null) {
+                        String failureCode = null;
+                        String failureReason = err.getMessage();
+                        if (err instanceof WebClientResponseException wcre) {
+                            try {
+                                String respBody = wcre.getResponseBodyAsString();
+                                if (respBody != null) {
+                                    JsonNode errorRoot = objectMapper.readTree(respBody);
+                                    JsonNode errorNode = errorRoot.path("error");
+                                    if (!errorNode.isMissingNode()) {
+                                        failureCode = errorNode.path("type").asText(null);
+                                        JsonNode errorData = errorNode.path("error_data");
+                                        if (!errorData.isMissingNode()) {
+                                            failureReason = errorData.path("details").asText(failureReason);
+                                        }
+                                        if (failureCode == null) {
+                                            failureCode = String.valueOf(errorNode.path("code").asInt());
+                                        }
+                                    }
+                                }
+                            } catch (Exception ignore) {}
+                        }
+                        messagePersistenceService.markOutgoingFailed(localMessageId, failureReason, Instant.now(), failureCode);
+                    }
                 })
                 .subscribe();
     }

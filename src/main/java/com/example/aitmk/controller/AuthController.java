@@ -14,7 +14,8 @@ import com.example.aitmk.service.AgentPushService;
 import com.example.aitmk.service.CacheSyncService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
-import com.example.aitmk.service.impl.AgentSessionActivityService;
+import com.example.aitmk.service.AgentPresence;
+import com.example.aitmk.service.AgentPresenceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -40,7 +41,7 @@ public class AuthController {
     private final AgentPushService agentPushService;
     private final ChatHistoryService chatHistoryService;
     private final CacheSyncService cacheSyncService;
-    private final AgentSessionActivityService sessionActivityService;
+    private final AgentPresenceService presenceService;
     private final JwtTokenService jwtTokenService;
 
     @PostMapping("/login")
@@ -67,17 +68,14 @@ public class AuthController {
         // 防重复登录：若该坐席已有“在线”记录，则不再新增在线状态记录
         Optional<String> onlineLoginRecord = crmOpenApiService.findActiveLoginRecordRowId(agent.getRowId());
         if (onlineLoginRecord.isPresent()) {
-            sessionActivityService.onLogin(agent.getRowId(), onlineLoginRecord.get());
+            presenceService.onLogin(agent.getRowId(), onlineLoginRecord.get());
         } else {
             Optional<String> loginRecord = crmOpenApiService.addAgentLoginRecord(agent.getRowId(), "挂机");
-            loginRecord.ifPresent(id -> sessionActivityService.onLogin(agent.getRowId(), id));
+            loginRecord.ifPresent(id -> presenceService.onLogin(agent.getRowId(), id));
         }
 
-        // 登录默认“挂机”：不参与会话分配，待前端切换为“在线”后再参与。
-        agentDispatchService.markOffline(agent.getRowId());
-        sessionActivityService.touch(agent.getRowId());
 
-        // 登录默认挂机，不主动领取待分配会话。
+        // onLogin 默认状态为 AWAY（挂机），不会加入分配候选池
 
         String accessToken = jwtTokenService.generateToken(agent);
         return ResponseEntity.ok(LoginResponse.builder()
@@ -102,12 +100,13 @@ public class AuthController {
                     .body(ApiErrorResponse.of("FORBIDDEN", "只能登出当前账号"));
         }
 
-        agentDispatchService.markOffline(targetAgentRowId);
+        presenceService.changeStatus(targetAgentRowId, AgentPresence.OFFLINE);
 
-        String loginRecordRowId = sessionActivityService.onLogout(targetAgentRowId);
+        String loginRecordRowId = presenceService.getLoginRecordRowId(targetAgentRowId);
         if (loginRecordRowId != null) {
             crmOpenApiService.updateAgentLoginStatus(loginRecordRowId, "离线");
         }
+        presenceService.onLogout(targetAgentRowId);
 
         return ResponseEntity.ok(LoginResponse.builder()
                 .success(true)

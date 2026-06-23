@@ -10,7 +10,7 @@ class FlywayMigrationPathTest {
     @Test void emptyDatabaseMigratesThroughV1AndV2() throws Exception {
         String url="jdbc:h2:mem:flyway_empty;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
         Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations("classpath:db/migration").load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(3);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(5);
         assertV2(url);
     }
 
@@ -20,7 +20,7 @@ class FlywayMigrationPathTest {
         try(var c=DriverManager.getConnection(url,"sa","");var s=c.createStatement()){s.execute("drop table flyway_schema_history");}
         Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations("classpath:db/migration")
                 .baselineOnMigrate(true).baselineVersion(MigrationVersion.fromVersion("1")).load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(2);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(4);
         assertV2(url);
     }
 

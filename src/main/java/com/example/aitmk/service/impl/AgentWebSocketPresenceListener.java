@@ -1,5 +1,6 @@
 package com.example.aitmk.service.impl;
 
+import com.example.aitmk.service.AgentPresenceService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -18,7 +19,7 @@ public class AgentWebSocketPresenceListener {
 
     private static final String AGENT_TOPIC_PREFIX = "/topic/agent/";
 
-    private final AgentSessionActivityService sessionActivityService;
+    private final AgentPresenceService presenceService;
 
     @EventListener
     public void onSessionSubscribe(SessionSubscribeEvent event) {
@@ -29,14 +30,14 @@ public class AgentWebSocketPresenceListener {
             return;
         }
         String agentRowId = destination.substring(AGENT_TOPIC_PREFIX.length());
-        sessionActivityService.onWebSocketSubscribe(sessionId, agentRowId);
+        presenceService.onWebSocketSubscribe(sessionId, agentRowId);
         log.info("WebSocket subscribed for agent topic. sessionId={}, agent={}", sessionId, agentRowId);
     }
 
     @EventListener
     public void onSessionDisconnect(SessionDisconnectEvent event) {
         String sessionId = event.getSessionId();
-        sessionActivityService.onWebSocketDisconnect(sessionId);
+        presenceService.onWebSocketDisconnect(sessionId);
         log.info("WebSocket disconnected. sessionId={}", sessionId);
     }
 }

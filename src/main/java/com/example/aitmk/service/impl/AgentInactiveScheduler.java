@@ -1,6 +1,7 @@
 package com.example.aitmk.service.impl;
 
 import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.AgentPresenceService;
 import com.example.aitmk.service.AiService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
@@ -28,7 +29,7 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class AgentInactiveScheduler {
 
-    private final AgentSessionActivityService sessionActivityService;
+    private final AgentPresenceService presenceService;
     private final AgentDispatchService agentDispatchService;
     private final CrmOpenApiService crmOpenApiService;
     private final ChatHistoryService chatHistoryService;
@@ -44,14 +45,19 @@ public class AgentInactiveScheduler {
 
     @Scheduled(fixedDelay = 30_000L, initialDelay = 30_000L)
     public void scanInactiveAgent() {
-        sessionActivityService.scanInactive(inactiveMinutes).forEach(state -> {
-            replyPendingCustomerMessagesWithAi(state.agentRowId());
-            agentDispatchService.markOffline(state.agentRowId());
-            if (state.loginRecordRowId() != null && !state.loginRecordRowId().isBlank()) {
-                crmOpenApiService.updateAgentLoginStatus(state.loginRecordRowId(), "离线");
+        var results = presenceService.scanInactive(inactiveMinutes);
+        for (var result : results) {
+            replyPendingCustomerMessagesWithAi(result.agentRowId());
+            if (result.loginRecordRowId() != null && !result.loginRecordRowId().isBlank()) {
+                try {
+                    crmOpenApiService.updateAgentLoginStatus(result.loginRecordRowId(), "离线");
+                } catch (Exception ex) {
+                    log.warn("Auto-offline CRM update failed. agent={}", result.agentRowId(), ex);
+                }
             }
-            log.info("Agent auto-offline by inactivity. agent={}, thresholdMinutes={}", state.agentRowId(), inactiveMinutes);
-        });
+            log.info("Agent auto-offline by inactivity. agent={}, oldStatus={}, thresholdMinutes={}",
+                    result.agentRowId(), result.oldStatus(), inactiveMinutes);
+        }
     }
 
     /**

@@ -14,7 +14,7 @@ public class WorkTimeServiceImpl implements WorkTimeService {
 
     private static final String START_TIME_CONTROL_ID = "69fd6fc2cd23604cb45f095d";
     private static final String END_TIME_CONTROL_ID = "69fd7074cd23604cb45f0969";
-    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("H:mm[:ss]");
 
     private final WorkTimeSettingCacheServiceImpl workTimeCache;
 

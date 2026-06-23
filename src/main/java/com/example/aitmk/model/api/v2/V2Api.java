@@ -66,4 +66,14 @@ public final class V2Api {
                             String resourceId, String conversationId, Object payload) {}
     public record UnreadCountPayload(long unreadCount, String lastReadMessageId) {}
     public record AssignmentChangedPayload(String fromAgentId, String targetAgentId, String reason) {}
+    public record AgentStats(
+        String agentId,
+        long totalLeadCount,
+        long activeConversations,
+        long todayClosed,
+        Double firstResponseP50,
+        Double firstResponseP90,
+        Double averageResponseTime,
+        long totalServed
+    ) {}
 }

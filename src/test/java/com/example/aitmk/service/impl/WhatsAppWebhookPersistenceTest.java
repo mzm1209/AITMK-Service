@@ -2,6 +2,13 @@ package com.example.aitmk.service.impl;
 
 import com.example.aitmk.model.entity.PersistenceEnums.*;
 import com.example.aitmk.model.domain.ChatMessageRecord;
+import com.example.aitmk.model.entity.ConversationEntity;
+import com.example.aitmk.model.entity.ResourceEntity;
+import com.example.aitmk.model.entity.PersistenceEnums.ConversationStatus;
+import com.example.aitmk.repository.ConversationRepository;
+import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.v2.RealtimeEventService;
+import com.example.aitmk.service.v2.RealtimePayloadFactory;
 import com.example.aitmk.service.*;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +38,11 @@ class WhatsAppWebhookPersistenceTest {
     @Mock WorkTimeService workTimeService;
     @Mock MessagePersistenceService persistenceService;
     @Mock InboundMessageRetryService inboundMessageRetryService;
+    @Mock ConversationRepository conversationRepository;
+    @Mock ResourceRepository resourceRepository;
+    @Mock AiOrchestrationService aiOrchestrationService;
+    @Mock RealtimeEventService realtimeEventService;
+    @Mock RealtimePayloadFactory realtimePayloadFactory;
     @InjectMocks WhatsAppWebhookServiceImpl webhookService;
 
     @BeforeEach
@@ -85,18 +97,27 @@ class WhatsAppWebhookPersistenceTest {
     @Test
     void noOnlineAgentUsesAiFallbackAfterLocalPersistenceEvenWhenCrmFails() {
         when(dispatchService.hasOnlineAgent()).thenReturn(false);
-        when(aiService.chat("need help")).thenReturn("{\"answer\":\"AI answer\"}");
-        when(persistenceService.createOutgoing(eq("8613800000103"), eq("business-1"), eq(SenderType.AI),
-                isNull(), isNull(), eq(MessageType.TEXT), eq("AI answer"), isNull(), isNull(), isNull())).thenReturn(42L);
         when(crmService.addChatRecord(anyString(), anyString(), any(), eq("客户"), anyString()))
                 .thenThrow(new IllegalStateException("CRM unavailable"));
-
+        ResourceEntity mockResource = new ResourceEntity();
+        mockResource.setCustomerPhone("8613800000103");
+        mockResource.setId(123L);
+        ConversationEntity mockConversation = new ConversationEntity();
+        mockConversation.setId(456L);
+        mockConversation.setResourceId(123L);
+        mockConversation.setCustomerPhone("8613800000103");
+        mockConversation.setAiState(AiState.NONE);
+        when(resourceRepository.findByCustomerPhone("8613800000103"))
+                .thenReturn(Optional.of(mockResource));
+        when(conversationRepository.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(
+                eq(123L), anyCollection()))
+                .thenReturn(Optional.of(mockConversation));
         webhookService.process(messagePayload("wamid.in.2", "8613800000103", "need help"));
-
         verify(inboundMessageRetryService).persist(anyString(), anyString(), eq("wamid.in.2"), anyString(),
                 eq("need help"), any(), any(), any(), any(), any());
         verify(dispatchService).markUnassigned("8613800000103");
-        verify(sendService).sendTextMessage("business-1", "8613800000103", "AI answer", 42L);
+        verify(aiOrchestrationService).orchestrate(eq("business-1"), eq("8613800000103"), eq("need help"),
+                any(ConversationEntity.class), any(ResourceEntity.class));
     }
 
     @Test
@@ -137,9 +158,20 @@ class WhatsAppWebhookPersistenceTest {
     @Test
     void mediaPayloadPersistsMediaMetadataAndDisplayContent() {
         when(dispatchService.hasOnlineAgent()).thenReturn(false);
-        when(aiService.chat(anyString())).thenReturn("{\"answer\":\"\"}");
-        when(persistenceService.createOutgoing(anyString(), anyString(), eq(SenderType.AI), any(), any(),
-                eq(MessageType.TEXT), anyString(), any(), any(), any())).thenReturn(9L);
+        when(crmService.addChatRecord(anyString(), anyString(), any(), eq("\u5ba2\u6237"), anyString())).thenReturn(true);
+        ResourceEntity mockResource = new ResourceEntity();
+        mockResource.setCustomerPhone("8613800000104");
+        mockResource.setId(124L);
+        ConversationEntity mockConversation = new ConversationEntity();
+        mockConversation.setId(457L);
+        mockConversation.setResourceId(124L);
+        mockConversation.setCustomerPhone("8613800000104");
+        mockConversation.setAiState(AiState.NONE);
+        when(resourceRepository.findByCustomerPhone("8613800000104"))
+                .thenReturn(Optional.of(mockResource));
+        when(conversationRepository.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(
+                eq(124L), anyCollection()))
+                .thenReturn(Optional.of(mockConversation));
         webhookService.process(mediaPayload());
 
         verify(inboundMessageRetryService).persist(eq("8613800000104"), eq("business-1"), eq("wamid.media"),

@@ -5,7 +5,7 @@ import com.example.aitmk.model.domain.WsReconnectRequest;
 import com.example.aitmk.security.auth.CurrentUser;
 import com.example.aitmk.security.permission.ChatPermissionService;
 import com.example.aitmk.service.AgentPushService;
-import com.example.aitmk.service.impl.AgentSessionActivityService;
+import com.example.aitmk.service.AgentPresenceService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,7 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class AgentController {
 
     private final AgentPushService agentPushService;
-    private final AgentSessionActivityService sessionActivityService;
+    private final AgentPresenceService presenceService;
     private final ChatPermissionService chatPermissionService;
 
     /**
@@ -37,7 +37,7 @@ public class AgentController {
         if (!chatPermissionService.canViewAgent(user, request.getAgentRowId())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "只能重连当前账号的 WebSocket"));
         }
-        sessionActivityService.touch(request.getAgentRowId());
+        presenceService.touch(request.getAgentRowId());
         agentPushService.resendFailed(request.getAgentRowId());
         return ResponseEntity.ok().build();
     }
@@ -51,7 +51,7 @@ public class AgentController {
         if (agentRowId != null && !agentRowId.isBlank() && !user.getAccountRowId().equals(agentRowId.trim())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "只能 ping 当前账号"));
         }
-        sessionActivityService.touch(user.getAccountRowId());
+        presenceService.touch(user.getAccountRowId());
         return ResponseEntity.ok().build();
     }
 }

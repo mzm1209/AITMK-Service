@@ -133,11 +133,11 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
     }
 
     @Override @Transactional
-    public void markOutgoingFailed(long localId, String reason, Instant at) {
+    public void markOutgoingFailed(long localId, String reason, Instant at, String failureCode) {
         messageRepository.findById(localId).ifPresent(message -> {
             if (message.getSentStatus() == SentStatus.READ) return;
             message.setSentStatus(SentStatus.FAILED); message.setFailedAt(at == null ? Instant.now() : at);
-            message.setFailureReason(truncate(reason)); messageRepository.saveAndFlush(message);
+            message.setFailureReason(truncate(reason)); message.setFailureCode(truncate(failureCode)); messageRepository.saveAndFlush(message);
             statusEvent(message);
         });
     }
