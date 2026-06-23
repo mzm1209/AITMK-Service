@@ -149,8 +149,7 @@ public class ChatController {
                                                   @RequestParam(value = "page", defaultValue = "1") int page,
                                                   @RequestParam(value = "size", defaultValue = "20") int size) {
         sessionActivityService.touch(agentRowId);
-        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
-        if (!statusMap.containsKey(customerId)) {
+        if (!crmOpenApiService.isCustomerAssignedToAgent(customerId, agentRowId)) {
             return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权查看该客户会话"));
         }
         int safeSize = Math.min(Math.max(size, 1), 50);

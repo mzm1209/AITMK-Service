@@ -598,11 +598,27 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         if (agentRowId == null || agentRowId.isBlank()) {
             return Optional.empty();
         }
-        return Optional.of(normalizeRelationRowId(agentRowId));
-    }
+       return Optional.of(normalizeRelationRowId(agentRowId));
+   }
 
     @Override
-    public Set<String> listOnlineAgents() {
+    public boolean isCustomerAssignedToAgent(String customerPhone, String agentAccountRowId) {
+        String normalizedAgentRowId = normalizeRelationRowId(agentAccountRowId);
+        if (normalizedAgentRowId == null || normalizedAgentRowId.isBlank()) {
+            return false;
+        }
+        List<Map<String, Object>> filters = List.of(
+                filter(ASSIGN_CUSTOMER_PHONE_CONTROL_ID, customerPhone, 2, 1, 2),
+                filter(ASSIGN_AGENT_CONTROL_ID, normalizedAgentRowId, 29, 1, 24)
+        );
+        JsonNode root = getFilterRows(ASSIGNMENT_WORKSHEET_ID, filters, 10);
+        return root != null
+                && root.path("success").asBoolean(false)
+                && root.path("data").path("total").asInt(0) > 0;
+    }
+
+   @Override
+   public Set<String> listOnlineAgents() {
         List<Map<String, Object>> filters = List.of(filter(AGENT_LOGIN_STATUS_CONTROL_ID, "在线",11,1,2));
         JsonNode root = getFilterRows(AGENT_LOGIN_WORKSHEET_ID, filters, 500);
         if (root == null || !root.path("success").asBoolean(false)) {
