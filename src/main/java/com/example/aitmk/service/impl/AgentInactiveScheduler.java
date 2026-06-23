@@ -5,12 +5,16 @@ import com.example.aitmk.service.AiService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.MessagePersistenceService;
+import com.example.aitmk.model.entity.PersistenceEnums.MessageType;
+import com.example.aitmk.model.entity.PersistenceEnums.SenderType;
 import com.example.aitmk.util.AiReplyParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.util.Map;
@@ -20,6 +24,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
+@ConditionalOnProperty(name = "integration.schedulers-enabled", havingValue = "true", matchIfMissing = true)
 @RequiredArgsConstructor
 public class AgentInactiveScheduler {
 
@@ -29,11 +34,12 @@ public class AgentInactiveScheduler {
     private final ChatHistoryService chatHistoryService;
     private final AiService aiService;
     private final SendMessageService sendMessageService;
+    private final MessagePersistenceService messagePersistenceService;
 
     @Value("${agent.inactive.minutes:3}")
     private int inactiveMinutes;
 
-    @Value("${whatsapp.default-business-account-id:1019964791197772}")
+    @Value("${whatsapp.default-business-account-id:}")
     private String defaultBusinessAccountId;
 
     @Scheduled(fixedDelay = 30_000L, initialDelay = 30_000L)
@@ -69,8 +75,9 @@ public class AgentInactiveScheduler {
             try {
                 String aiRaw = aiService.chat(last.getMessage());
                 String aiText = AiReplyParser.parseAnswer(aiRaw);
-                chatHistoryService.recordAiReply(customerPhone, aiText);
-                sendMessageService.sendTextMessage(defaultBusinessAccountId, customerPhone, aiText);
+                long localMessageId = messagePersistenceService.createOutgoing(customerPhone, defaultBusinessAccountId,
+                        SenderType.AI, null, null, MessageType.TEXT, aiText, null, null, null);
+                sendMessageService.sendTextMessage(defaultBusinessAccountId, customerPhone, aiText, localMessageId);
                 crmOpenApiService.addChatRecord(defaultBusinessAccountId, customerPhone, offlineAgentRowId, "AI", aiText);
                 log.info("Auto AI replied for offline agent pending customer message. agent={}, customer={}", offlineAgentRowId, customerPhone);
             } catch (Exception ex) {

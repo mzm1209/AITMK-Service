@@ -19,6 +19,9 @@ public interface SendMessageService {
      * @param message 消息内容
      */
     void sendTextMessage(String from, String to, String message);
+    default void sendTextMessage(String from, String to, String message, Long localMessageId) {
+        sendTextMessage(from, to, message);
+    }
 
     /**
      * 发送媒体消息，支持通过 mediaId 或 link 发送。
@@ -30,6 +33,10 @@ public interface SendMessageService {
                           String mediaUrl,
                           String filename,
                           String caption);
+    default void sendMediaMessage(String from, String to, String mediaType, String mediaId, String mediaUrl,
+                                  String filename, String caption, Long localMessageId) {
+        sendMediaMessage(from, to, mediaType, mediaId, mediaUrl, filename, caption);
+    }
 
     /**
      * 发送图片消息

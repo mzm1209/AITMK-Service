@@ -9,6 +9,7 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
 
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
@@ -24,10 +25,12 @@ public class WorkTimeSettingCacheServiceImpl implements WorkTimeSettingCacheServ
     private final CrmOpenApiService crmOpenApiService;
     private final ObjectMapper objectMapper;
     private final AtomicReference<ArrayNode> cache = new AtomicReference<>();
+    @Value("${crm.bootstrap-enabled:true}")
+    private boolean bootstrapEnabled;
 
     @PostConstruct
     public void init() {
-        reload();
+        if (bootstrapEnabled) reload();
     }
 
     @Override

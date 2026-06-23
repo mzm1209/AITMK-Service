@@ -1,6 +1,9 @@
 package com.example.aitmk.controller;
 
+import com.example.aitmk.model.api.ApiErrorResponse;
 import com.example.aitmk.model.domain.AgentStatusUpdateRequest;
+import com.example.aitmk.security.auth.CurrentUser;
+import com.example.aitmk.security.permission.ChatPermissionService;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
@@ -8,6 +11,7 @@ import com.example.aitmk.service.AgentPushService;
 import jakarta.validation.Valid;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -38,10 +42,15 @@ public class AgentStatusController {
     private final AgentDispatchService agentDispatchService;
     private final AgentPushService agentPushService;
     private final ChatHistoryService chatHistoryService;
+    private final ChatPermissionService chatPermissionService;
 
 
     @PostMapping("/update")
     public ResponseEntity<?> updateStatus(@Valid @RequestBody AgentStatusUpdateRequest request) {
+        var user = CurrentUser.get();
+        if (!user.getAccountRowId().equals(request.getAgentRowId().trim())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "只能更新当前账号状态"));
+        }
         String status = request.getStatus().trim();
         if (!"在线".equals(status) && !"挂机".equals(status) && !"离线".equals(status)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "仅支持 在线/挂机/离线"));
@@ -75,9 +84,15 @@ public class AgentStatusController {
                                         @RequestParam(value = "status", required = false) String status,
                                         @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
                                         @RequestParam(value = "pageIndex", defaultValue = "1") int pageIndex) {
+        var user = CurrentUser.get();
         List<Map<String, Object>> filters = new ArrayList<>();
         if (StringUtils.hasText(agentRowId)) {
+            if (!chatPermissionService.canViewAgent(user, agentRowId.trim())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权查看该坐席状态"));
+            }
             filters.add(filter(AGENT_ROW_ID_CONTROL_ID, agentRowId.trim(), 29, 1, 24));
+        } else if (!chatPermissionService.canManageAgentLevels(user)) {
+            filters.add(filter(AGENT_ROW_ID_CONTROL_ID, user.getAccountRowId(), 29, 1, 24));
         }
         if (StringUtils.hasText(status)) {
             filters.add(filter(AGENT_STATUS_CONTROL_ID, status.trim(), 11, 1, 2));

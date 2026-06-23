@@ -1,10 +1,14 @@
 package com.example.aitmk.controller;
 
+import com.example.aitmk.model.api.ApiErrorResponse;
 import com.example.aitmk.model.domain.AgentLevelUpsertRequest;
+import com.example.aitmk.security.auth.CurrentUser;
+import com.example.aitmk.security.permission.ChatPermissionService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -36,9 +40,14 @@ public class AgentLevelController {
     private static final String LEVEL_MAX_LOAD_CONTROL_ID = "69ca5313433ec9f4b5e7fcab";
 
     private final CrmOpenApiService crmOpenApiService;
+    private final ChatPermissionService chatPermissionService;
 
     @PostMapping
     public ResponseEntity<?> addLevel(@Valid @RequestBody AgentLevelUpsertRequest request) {
+        ResponseEntity<?> forbidden = requireManager();
+        if (forbidden != null) {
+            return forbidden;
+        }
         JsonNode root = crmOpenApiService.frontendAddRow(WORKSHEET_ID, buildControls(request), true);
         if (root == null || !root.path("success").asBoolean(false)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "新增坐席等级失败"));
@@ -49,6 +58,10 @@ public class AgentLevelController {
     @PutMapping("/{rowId}")
     public ResponseEntity<?> editLevel(@PathVariable String rowId,
                                        @Valid @RequestBody AgentLevelUpsertRequest request) {
+        ResponseEntity<?> forbidden = requireManager();
+        if (forbidden != null) {
+            return forbidden;
+        }
         if (!StringUtils.hasText(rowId)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
         }
@@ -63,6 +76,10 @@ public class AgentLevelController {
     public ResponseEntity<?> listLevels(@RequestParam(value = "keyword", required = false) String keyword,
                                         @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
                                         @RequestParam(value = "pageIndex", defaultValue = "1") int pageIndex) {
+        ResponseEntity<?> forbidden = requireManager();
+        if (forbidden != null) {
+            return forbidden;
+        }
         List<Map<String, Object>> filters = new ArrayList<>();
         if (StringUtils.hasText(keyword)) {
             filters.add(filter(LEVEL_NAME_CONTROL_ID, keyword.trim(), 2, 1, 7));
@@ -80,6 +97,10 @@ public class AgentLevelController {
 
     @DeleteMapping("/{rowId}")
     public ResponseEntity<?> deleteLevel(@PathVariable String rowId) {
+        ResponseEntity<?> forbidden = requireManager();
+        if (forbidden != null) {
+            return forbidden;
+        }
         if (!StringUtils.hasText(rowId)) {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "rowId 不能为空"));
         }
@@ -113,5 +134,12 @@ public class AgentLevelController {
         item.put("filterType", filterType);
         item.put("value", value);
         return item;
+    }
+
+    private ResponseEntity<?> requireManager() {
+        if (chatPermissionService.canManageAgentLevels(CurrentUser.get())) {
+            return null;
+        }
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权管理坐席等级"));
     }
 }

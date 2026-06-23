@@ -1,0 +1,7 @@
+package com.example.aitmk.controller.v2;
+import com.example.aitmk.model.api.v2.V2Api.*;import com.example.aitmk.security.auth.CurrentUser;import com.example.aitmk.service.v2.*;import lombok.RequiredArgsConstructor;import org.springframework.web.bind.annotation.*;import java.util.*;
+@RestController @RequestMapping("/api/v2/resources") @RequiredArgsConstructor public class ResourceV2Controller{private final ResourceQueryService service;
+ @GetMapping("/{id}") public Response<ResourceView> get(@PathVariable Long id){return Response.ok(service.view(id,CurrentUser.get()));}
+ @GetMapping("/{id}/conversations") public Response<CursorPage<ConversationHistoryView>> conversations(@PathVariable Long id,@RequestParam(required=false)String cursor,@RequestParam(defaultValue="30")int size){return Response.ok(service.conversations(id,cursor,size,CurrentUser.get()));}
+ @GetMapping("/{id}/assignments") public Response<CursorPage<AssignmentView>> assignments(@PathVariable Long id,@RequestParam(required=false)String cursor,@RequestParam(defaultValue="30")int size){return Response.ok(service.assignments(id,cursor,size,CurrentUser.get()));}
+ @GetMapping("/{id}/crm-profile") public Response<Map<String,Object>> crm(@PathVariable Long id){var r=service.get(id,CurrentUser.get());return Response.ok(Map.of("resourceId",id.toString(),"customerPhone",r.getCustomerPhone(),"customerName",r.getCustomerName()==null?"":r.getCustomerName(),"crmStatus","NOT_LINKED"));}}

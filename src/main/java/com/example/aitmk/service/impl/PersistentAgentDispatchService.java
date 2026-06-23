@@ -1,0 +1,202 @@
+package com.example.aitmk.service.impl;
+
+import com.example.aitmk.model.entity.*;
+import com.example.aitmk.model.entity.PersistenceEnums.*;
+import com.example.aitmk.repository.*;
+import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.AssignmentPersistenceService;
+import com.example.aitmk.service.v2.RealtimeEventService;
+import com.example.aitmk.service.v2.RealtimePayloadFactory;
+import com.example.aitmk.model.api.v2.V2Api;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Primary;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Collectors;
+
+@Slf4j
+@Service
+@Primary
+@RequiredArgsConstructor
+public class PersistentAgentDispatchService implements AgentDispatchService, AssignmentPersistenceService {
+    private final ResourceRepository resources;
+    private final ConversationRepository conversations;
+    private final AssignmentRecordRepository assignments;
+    private final RealtimeEventService events;
+    private final RealtimePayloadFactory payloads;
+    private final Set<String> onlineAgents = Collections.synchronizedSet(new LinkedHashSet<>());
+    private final Map<String, AgentProfile> profiles = new ConcurrentHashMap<>();
+    private final AtomicInteger roundRobin = new AtomicInteger();
+    private static final EnumSet<ConversationStatus> ACTIVE = EnumSet.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE);
+
+    @Override public void markOnline(String id) { if (StringUtils.hasText(id)) onlineAgents.add(id.trim()); }
+    @Override public void markOffline(String id) { if (StringUtils.hasText(id)) onlineAgents.remove(id.trim()); }
+    @Override public boolean hasOnlineAgent() { return !onlineAgents.isEmpty(); }
+    @Override @Transactional(readOnly = true) public Optional<String> getAssignedAgent(String phone) { return currentAgent(phone); }
+
+    @Override @Transactional
+    public Optional<String> assignIfAbsent(String phone) {
+        ResourceEntity resource = lockOrCreate(phone);
+        Optional<AssignmentRecordEntity> active = assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(resource.getId(), AssignmentStatus.SERVING);
+        if (active.isPresent()) return Optional.of(active.get().getAgentId());
+        String selected = selectAgent();
+        if (selected == null) { resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT); resources.save(resource); return Optional.empty(); }
+        return assignLocked(resource, selected, AssignType.AUTO, "SYSTEM");
+    }
+
+    @Override @Transactional
+    public void markUnassigned(String phone) {
+        ResourceEntity resource = lockOrCreate(phone);
+        if (resource.getAssignedAgentId() == null) resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT);
+        resources.save(resource);
+    }
+
+    @Override @Transactional
+    public void unassignCustomer(String phone) {
+        resources.findByCustomerPhoneForUpdate(phone).ifPresent(resource -> closeAssignment(resource, "UNASSIGNED", AssignmentStatus.CLOSED));
+    }
+
+    @Override @Transactional
+    public Optional<String> transferCustomer(String phone, String target, String assignedBy) {
+        if (!StringUtils.hasText(target)) return Optional.empty();
+        ResourceEntity resource = resources.findByCustomerPhoneForUpdate(phone).orElse(null);
+        if (resource == null || resource.getAssignedAgentId() == null) return Optional.empty();
+        closeAssignment(resource, "TRANSFER", AssignmentStatus.TRANSFERRED);
+        return assignLocked(resource, target.trim(), AssignType.TRANSFER,
+                StringUtils.hasText(assignedBy) ? assignedBy.trim() : "SYSTEM");
+    }
+
+    @Override @Transactional
+    public Optional<String> assignOnePendingCustomerToAgent(String agent) {
+        if (!StringUtils.hasText(agent)) return Optional.empty();
+        ResourceEntity candidate = resources.findFirstByResourceStatusOrderByCreatedAtAsc(ResourceStatus.PENDING_ASSIGNMENT).orElse(null);
+        if (candidate == null) return Optional.empty();
+        ResourceEntity locked = resources.findByCustomerPhoneForUpdate(candidate.getCustomerPhone()).orElse(null);
+        if (locked == null || locked.getAssignedAgentId() != null) return Optional.empty();
+        return assignLocked(locked, agent.trim(), AssignType.AUTO, "SYSTEM").map(ignored -> locked.getCustomerPhone());
+    }
+
+    @Override public Set<String> onlineAgentsSnapshot() { synchronized (onlineAgents) { return new LinkedHashSet<>(onlineAgents); } }
+    @Override @Transactional(readOnly = true) public Map<String, String> assignmentsSnapshot() { return currentAssignments(); }
+
+    @Override public void replaceState(Set<String> online, Map<String, String> ignoredCrmAssignments) {
+        onlineAgents.clear();
+        if (online != null) online.stream().filter(StringUtils::hasText).map(String::trim).forEach(onlineAgents::add);
+        if (ignoredCrmAssignments != null && !ignoredCrmAssignments.isEmpty())
+            log.info("Ignored {} CRM assignments because local database is authoritative", ignoredCrmAssignments.size());
+    }
+
+    @Override public void setAgentProfile(String id, String level, double weight, int maxLoad) {
+        if (StringUtils.hasText(id)) profiles.put(id.trim(), new AgentProfile(level == null ? "中级" : level, Math.max(weight, 0.1), Math.max(maxLoad, 1)));
+    }
+    @Override @Transactional
+    public void markCustomerMessageAt(String phone) {
+        Instant now = Instant.now();
+        resources.findByCustomerPhoneForUpdate(phone).ifPresent(resource -> {
+            resource.setLastCustomerMessageAt(max(resource.getLastCustomerMessageAt(), now));
+            resource.setLastMessageAt(max(resource.getLastMessageAt(), now));
+            resources.save(resource);
+        });
+    }
+
+    @Override @Transactional
+    public void markAgentReplied(String phone) {
+        Instant now = Instant.now();
+        resources.findByCustomerPhoneForUpdate(phone).ifPresent(resource -> {
+            resource.setLastAgentMessageAt(max(resource.getLastAgentMessageAt(), now));
+            resource.setLastMessageAt(max(resource.getLastMessageAt(), now));
+            resources.save(resource);
+        });
+    }
+
+    @Override @Transactional
+    public TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes) {
+        Instant now = Instant.now(); Set<String> warn = new HashSet<>(), reclaimed = new HashSet<>();
+        for (Long resourceId : resources.findAllIds()) {
+            ResourceEntity r = resources.findByIdForUpdate(resourceId).orElse(null);
+            if (r == null) continue;
+            if (r.getAssignedAgentId() == null || r.getLastCustomerMessageAt() == null) continue;
+            long minutes = Duration.between(r.getLastCustomerMessageAt(), now).toMinutes();
+            if (minutes >= reclaimMinutes) { closeAssignment(r, "TIMEOUT", AssignmentStatus.CLOSED); reclaimed.add(r.getCustomerPhone()); }
+            else if (minutes >= warnMinutes) warn.add(r.getCustomerPhone());
+        }
+        return new TimeoutScanResult(warn, reclaimed);
+    }
+
+    @Override @Transactional(readOnly = true)
+    public Optional<String> currentAgent(String phone) {
+        return resources.findByCustomerPhone(phone).map(ResourceEntity::getAssignedAgentId).filter(StringUtils::hasText);
+    }
+    @Override @Transactional(readOnly = true)
+    public Map<String, String> currentAssignments() {
+        return assignments.findByStatus(AssignmentStatus.SERVING).stream().collect(Collectors.toMap(AssignmentRecordEntity::getCustomerPhone, AssignmentRecordEntity::getAgentId, (a,b) -> a, LinkedHashMap::new));
+    }
+    @Override @Transactional(readOnly = true)
+    public boolean hasServed(String phone, String agent) { return assignments.existsByCustomerPhoneAndAgentId(phone, agent); }
+
+    private Optional<String> assignLocked(ResourceEntity resource, String agent, AssignType type, String by) {
+        Instant now = Instant.now();
+        ConversationEntity conversation = conversations.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(resource.getId(), ACTIVE).orElse(null);
+        AssignmentRecordEntity record = new AssignmentRecordEntity();
+        record.setResourceId(resource.getId()); record.setConversationId(conversation == null ? null : conversation.getId());
+        record.setCustomerPhone(resource.getCustomerPhone()); record.setAgentId(agent); record.setAssignedBy(by); record.setAssignType(type);
+        try { assignments.saveAndFlush(record); }
+        catch (DataIntegrityViolationException duplicate) {
+            return assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(resource.getId(), AssignmentStatus.SERVING).map(AssignmentRecordEntity::getAgentId);
+        }
+        String oldAgent = resource.getAssignedAgentId();
+        resource.setAssignedAgentId(agent); resource.setAssignedAt(now); resource.setResourceStatus(ResourceStatus.ASSIGNED); resources.saveAndFlush(resource);
+        if (conversation != null) {
+            conversation.setAssignedAgentId(agent); conversation.setStatus(ConversationStatus.HUMAN_ACTIVE); conversations.saveAndFlush(conversation);
+            var assignmentPayload = new V2Api.AssignmentChangedPayload(oldAgent, agent, type.name());
+            events.append("ASSIGNMENT_CHANGED", "CONVERSATION", conversation.getId(), resource.getId(), conversation.getId(), agent, conversation.getVersion(), assignmentPayload);
+            events.append("CONVERSATION_UPDATED", "CONVERSATION", conversation.getId(), resource.getId(), conversation.getId(), agent, conversation.getVersion(), payloads.conversation(conversation, agent));
+            if (oldAgent != null && !oldAgent.equals(agent)) {
+                events.append("ASSIGNMENT_CHANGED", "CONVERSATION", conversation.getId(), resource.getId(), conversation.getId(), oldAgent, conversation.getVersion(), assignmentPayload);
+                events.append("CONVERSATION_UPDATED", "CONVERSATION", conversation.getId(), resource.getId(), conversation.getId(), oldAgent, conversation.getVersion(), payloads.conversation(conversation, oldAgent));
+            }
+        }
+        return Optional.of(agent);
+    }
+
+    private void closeAssignment(ResourceEntity resource, String reason, AssignmentStatus finalStatus) {
+        Instant now = Instant.now();
+        assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(resource.getId(), AssignmentStatus.SERVING).ifPresent(a -> {
+            a.setStatus(finalStatus); a.setReplyable(false); a.setClosedAt(now); a.setCloseReason(reason); assignments.save(a);
+        });
+        String oldAgent = resource.getAssignedAgentId();
+        resource.setAssignedAgentId(null); resource.setAssignedAt(null); resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT); resources.saveAndFlush(resource);
+        conversations.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(resource.getId(), ACTIVE).ifPresent(c -> {
+            c.setAssignedAgentId(null); c.setStatus(ConversationStatus.AI_ACTIVE); conversations.saveAndFlush(c);
+            if (oldAgent != null) {
+                events.append("ASSIGNMENT_CHANGED", "CONVERSATION", c.getId(), resource.getId(), c.getId(), oldAgent, c.getVersion(),
+                        new V2Api.AssignmentChangedPayload(oldAgent, null, reason));
+                events.append("CONVERSATION_UPDATED", "CONVERSATION", c.getId(), resource.getId(), c.getId(), oldAgent, c.getVersion(),
+                        payloads.conversation(c, oldAgent));
+            }
+        });
+    }
+
+    private ResourceEntity lockOrCreate(String phone) {
+        if (!StringUtils.hasText(phone)) throw new IllegalArgumentException("customerPhone must not be blank");
+        return resources.findByCustomerPhoneForUpdate(phone).orElseGet(() -> { ResourceEntity r = new ResourceEntity(); r.setCustomerPhone(phone); r.setSourceExternalId(phone); return resources.saveAndFlush(r); });
+    }
+    private String selectAgent() {
+        List<String> candidates; synchronized (onlineAgents) { candidates = new ArrayList<>(onlineAgents); }
+        candidates.removeIf(agent -> assignments.findByAgentIdAndStatus(agent, AssignmentStatus.SERVING).size() >= profiles.getOrDefault(agent, new AgentProfile("中级", 1, 8)).maxLoad());
+        if (candidates.isEmpty()) return null;
+        return candidates.get(Math.floorMod(roundRobin.getAndIncrement(), candidates.size()));
+    }
+    private Instant max(Instant current, Instant candidate) {
+        return current == null || candidate.isAfter(current) ? candidate : current;
+    }
+    private record AgentProfile(String level, double weight, int maxLoad) {}
+}

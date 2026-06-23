@@ -23,6 +23,11 @@ public interface AgentDispatchService {
      */
     void unassignCustomer(String customerPhone);
 
+    /** Atomically transfer the active assignment to another agent. */
+    default Optional<String> transferCustomer(String customerPhone, String targetAgentRowId, String assignedBy) {
+        return Optional.empty();
+    }
+
     Optional<String> assignOnePendingCustomerToAgent(String agentRowId);
 
     Set<String> onlineAgentsSnapshot();

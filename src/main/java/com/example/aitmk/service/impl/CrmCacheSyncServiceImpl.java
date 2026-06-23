@@ -7,7 +7,6 @@ import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.CacheSyncService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -31,49 +30,14 @@ public class CrmCacheSyncServiceImpl implements CacheSyncService {
     private final AgentDispatchService agentDispatchService;
     private final ChatHistoryService chatHistoryService;
 
-    @PostConstruct
-    public void init() {
-        syncFromCrm();
-    }
-
     @Override
     public synchronized void syncFromCrm() {
         try {
             Set<String> onlineAgents = new LinkedHashSet<>(crmOpenApiService.listOnlineAgents());
-            List<AssignmentRecord> assignments = crmOpenApiService.listAssignments();
-            List<CrmChatRecord> chats = crmOpenApiService.listChatRecords();
-
-            Map<String, String> assignmentMap = new HashMap<>();
-            assignments.forEach(a -> assignmentMap.put(a.getCustomerPhone(), a.getAgentRowId()));
-            agentDispatchService.replaceState(onlineAgents, assignmentMap);
-
-            Map<String, List<ChatMessageRecord>> historyMap = new HashMap<>();
-            for (CrmChatRecord c : chats) {
-                historyMap.compute(c.getCustomerPhone(), (k, v) -> {
-                    List<ChatMessageRecord> list = v == null ? new ArrayList<>() : v;
-                    list.add(ChatMessageRecord.builder()
-                            .customerId(c.getCustomerPhone())
-                            .sender(c.getSender())
-                            .message(c.getContent())
-                            .timestamp(c.getSendTime())
-                            .build());
-                    return list;
-                });
-            }
-            chatHistoryService.replaceAll(historyMap);
-
-            // 重建未分配队列：在本地有会话但CRM分配表无绑定的客户，标记为待分配
-            historyMap.keySet().forEach(customer -> {
-                if (!assignmentMap.containsKey(customer)) {
-                    agentDispatchService.markUnassigned(customer);
-                }
-            });
-
-            log.info("CRM cache sync success. onlineAgents={}, assignments={}, customers={}, pendingRebuilt={}",
-                    onlineAgents.size(), assignmentMap.size(), historyMap.size(),
-                    Math.max(historyMap.size() - assignmentMap.size(), 0));
+            agentDispatchService.replaceState(onlineAgents, Map.of());
+            log.debug("CRM presence sync success. onlineAgents={}; local database assignments/history were not overwritten", onlineAgents.size());
         } catch (Exception e) {
-            log.error("CRM cache sync failed", e);
+            log.warn("CRM cache sync failed. errorType={}", e.getClass().getSimpleName());
         }
     }
 }

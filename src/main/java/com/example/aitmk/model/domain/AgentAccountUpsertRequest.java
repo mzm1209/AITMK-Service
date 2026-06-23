@@ -3,6 +3,7 @@ package com.example.aitmk.model.domain;
 import jakarta.validation.constraints.NotBlank;
 import com.fasterxml.jackson.annotation.JsonAlias;
 import lombok.Data;
+import java.util.List;
 
 /**
  * 坐席账号新增/修改参数。
@@ -23,4 +24,14 @@ public class AgentAccountUpsertRequest {
      */
     @JsonAlias({"agentLevelRowIds"})
     private String agentLevel;
+
+    /** 业务角色：OWNER / MANAGER / TMK。 */
+    private String role;
+
+    /** MANAGER 管理的 CRM 账号 rowId；每次保存均全量覆盖。 */
+    private List<String> managedAgentIds = List.of();
+
+    /** 账号状态，支持传 启用/停用。 */
+    @JsonAlias({"accountStatus", "status"})
+    private String enabled;
 }

@@ -1,18 +1,28 @@
 package com.example.aitmk.controller;
 
 import com.example.aitmk.model.domain.AgentCustomerView;
+import com.example.aitmk.model.api.ApiErrorResponse;
 import com.example.aitmk.model.domain.ChatCustomer;
 import com.example.aitmk.model.domain.ChatMessageRecord;
 import com.example.aitmk.model.domain.ManualMediaReplyRequest;
 import com.example.aitmk.model.domain.PageResult;
 import com.example.aitmk.model.domain.ManualReplyRequest;
+import com.example.aitmk.security.auth.AgentRole;
+import com.example.aitmk.security.auth.AuthenticatedUser;
+import com.example.aitmk.security.auth.CurrentUser;
+import com.example.aitmk.security.permission.ChatPermissionService;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.MessagePersistenceService;
+import com.example.aitmk.service.AssignmentPersistenceService;
+import com.example.aitmk.model.entity.PersistenceEnums.MessageType;
+import com.example.aitmk.model.entity.PersistenceEnums.SenderType;
 import com.example.aitmk.service.impl.AgentSessionActivityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -45,13 +55,20 @@ public class ChatController {
     /** 坐席分配服务（读取客户归属坐席）。 */
     private final AgentDispatchService agentDispatchService;
     private final AgentSessionActivityService sessionActivityService;
+    private final ChatPermissionService chatPermissionService;
+    private final MessagePersistenceService messagePersistenceService;
+    private final AssignmentPersistenceService assignmentPersistenceService;
 
     /**
      * 拉取客户列表，按最近消息时间倒序返回。
      */
     @GetMapping("/customers")
     public ResponseEntity<List<ChatCustomer>> customers() {
-        return ResponseEntity.ok(chatHistoryService.listCustomers());
+        AuthenticatedUser user = CurrentUser.get();
+        sessionActivityService.touch(user.getAccountRowId());
+        return ResponseEntity.ok(chatHistoryService.listCustomers().stream()
+                .filter(customer -> chatPermissionService.canViewCustomer(user, customer.getCustomerId()))
+                .toList());
     }
 
 
@@ -59,24 +76,13 @@ public class ChatController {
      * 返回当前坐席服务过的客户列表（包含服务中、已关闭），并附带服务状态。
      */
     @GetMapping("/customers/serving")
-    public ResponseEntity<List<AgentCustomerView>> servingCustomers(@RequestParam("agentRowId") String agentRowId) {
-        sessionActivityService.touch(agentRowId);
-        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
-        List<AgentCustomerView> customers = chatHistoryService.listCustomers().stream()
-                .filter(c -> statusMap.containsKey(c.getCustomerId()))
-                .map(c -> {
-                    String status = statusMap.getOrDefault(c.getCustomerId(), "已关闭");
-                    return AgentCustomerView.builder()
-                            .customerId(c.getCustomerId())
-                            .customerNickname(c.getCustomerNickname())
-                            .lastMessage(c.getLastMessage())
-                            .lastMessageAt(c.getLastMessageAt())
-                            .serviceStatus(status)
-                            .canReply("服务中".equals(status))
-                            .build();
-                })
-                .toList();
-        return ResponseEntity.ok(customers);
+    public ResponseEntity<?> servingCustomers(@RequestParam("agentRowId") String agentRowId) {
+        AuthenticatedUser user = CurrentUser.get();
+        if (!chatPermissionService.canViewAgent(user, agentRowId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权查看该坐席会话"));
+        }
+        sessionActivityService.touch(user.getAccountRowId());
+        return ResponseEntity.ok(listAgentCustomers(agentRowId, user));
     }
 
 
@@ -89,15 +95,26 @@ public class ChatController {
                                                                        @RequestParam(value = "size", defaultValue = "20") int size,
                                                                        @RequestParam(value = "status", defaultValue = "all") String status,
                                                                        @RequestParam(value = "keyword", required = false) String keyword) {
+        AuthenticatedUser user = CurrentUser.get();
+        if (!chatPermissionService.canViewAgent(user, agentRowId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(PageResult.<AgentCustomerView>builder()
+                    .items(List.of())
+                    .page(Math.max(page, 1))
+                    .size(Math.min(Math.max(size, 1), 50))
+                    .total(0)
+                    .hasNext(false)
+                    .build());
+        }
         int safeSize = Math.min(Math.max(size, 1), 50);
         int safePage = Math.max(page, 1);
-        sessionActivityService.touch(agentRowId);
+        sessionActivityService.touch(user.getAccountRowId());
 
-        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
+        Map<String, String> activeAssignments = assignmentPersistenceService.currentAssignments();
         List<AgentCustomerView> filtered = chatHistoryService.listCustomers().stream()
-                .filter(c -> statusMap.containsKey(c.getCustomerId()))
+                .filter(c -> assignmentPersistenceService.hasServed(c.getCustomerId(), agentRowId))
+                .filter(c -> chatPermissionService.canViewCustomer(user, c.getCustomerId()))
                 .map(c -> {
-                    String serviceStatus = statusMap.getOrDefault(c.getCustomerId(), "已关闭");
+                    String serviceStatus = agentRowId.equals(activeAssignments.get(c.getCustomerId())) ? "服务中" : "已关闭";
                     return AgentCustomerView.builder()
                             .customerId(c.getCustomerId())
                             .customerNickname(c.getCustomerNickname())
@@ -145,13 +162,13 @@ public class ChatController {
      */
     @GetMapping("/conversations/{customerId}/messages")
     public ResponseEntity<?> conversationMessages(@org.springframework.web.bind.annotation.PathVariable("customerId") String customerId,
-                                                  @RequestParam("agentRowId") String agentRowId,
+                                                  @RequestParam(value = "agentRowId", required = false) String agentRowId,
                                                   @RequestParam(value = "page", defaultValue = "1") int page,
                                                   @RequestParam(value = "size", defaultValue = "20") int size) {
-        sessionActivityService.touch(agentRowId);
-        Map<String, String> statusMap = crmOpenApiService.listAgentCustomerServiceStatus(agentRowId);
-        if (!statusMap.containsKey(customerId)) {
-            return ResponseEntity.status(403).body(Map.of("success", false, "message", "无权查看该客户会话"));
+        AuthenticatedUser user = CurrentUser.get();
+        sessionActivityService.touch(user.getAccountRowId());
+        if (!chatPermissionService.canViewCustomer(user, customerId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权查看该客户会话"));
         }
         int safeSize = Math.min(Math.max(size, 1), 50);
         int safePage = Math.max(page, 1);
@@ -161,7 +178,12 @@ public class ChatController {
      * 根据客户 ID 拉取聊天记录，记录中包含客户消息、AI 自动回复与人工回复。
      */
     @GetMapping("/messages")
-    public ResponseEntity<List<ChatMessageRecord>> messages(@RequestParam("customerId") String customerId) {
+    public ResponseEntity<?> messages(@RequestParam("customerId") String customerId) {
+        AuthenticatedUser user = CurrentUser.get();
+        sessionActivityService.touch(user.getAccountRowId());
+        if (!chatPermissionService.canViewCustomer(user, customerId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权查看该客户会话"));
+        }
         return ResponseEntity.ok(chatHistoryService.listMessages(customerId));
     }
 
@@ -178,6 +200,7 @@ public class ChatController {
                     "message", "file 不能为空"
             ));
         }
+        sessionActivityService.touch(CurrentUser.get().getAccountRowId());
         try {
             String mediaId = sendMessageService.uploadMedia(from, mediaType, file);
             return ResponseEntity.ok(Map.of(
@@ -201,6 +224,11 @@ public class ChatController {
      */
     @PostMapping("/reply")
     public ResponseEntity<?> reply(@Valid @RequestBody ManualReplyRequest request) {
+        AuthenticatedUser user = CurrentUser.get();
+        sessionActivityService.touch(user.getAccountRowId());
+        if (!chatPermissionService.canReplyCustomer(user, request.getCustomerId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权回复该客户会话"));
+        }
         Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
         if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
             crmOpenApiService.updateServingAssignmentReplyable(request.getCustomerId(), false);
@@ -210,11 +238,15 @@ public class ChatController {
             ));
         }
 
-        sendMessageService.sendTextMessage(request.getFrom(), request.getCustomerId(), request.getMessage());
-        chatHistoryService.recordManualReply(request.getCustomerId(), request.getMessage());
+        long localMessageId = messagePersistenceService.createOutgoing(request.getCustomerId(), request.getFrom(),
+                user.getRole() == AgentRole.TMK ? SenderType.AGENT : SenderType.MANAGER,
+                user.getAccountRowId(), user.getRole().name(), MessageType.TEXT, request.getMessage(), null, null, null);
+        sendMessageService.sendTextMessage(request.getFrom(), request.getCustomerId(), request.getMessage(), localMessageId);
         agentDispatchService.markAgentReplied(request.getCustomerId());
 
-        String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
+        String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId())
+                .or(() -> crmOpenApiService.findServingAgentRowId(request.getCustomerId()))
+                .orElse(user.getAccountRowId());
         sessionActivityService.touch(assignedAgent);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", request.getMessage());
         return ResponseEntity.ok(Map.of("success", true));
@@ -229,6 +261,11 @@ public class ChatController {
      */
     @PostMapping("/reply/media")
     public ResponseEntity<?> mediaReply(@Valid @RequestBody ManualMediaReplyRequest request) {
+        AuthenticatedUser user = CurrentUser.get();
+        sessionActivityService.touch(user.getAccountRowId());
+        if (!chatPermissionService.canReplyCustomer(user, request.getCustomerId())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(ApiErrorResponse.of("FORBIDDEN", "无权回复该客户会话"));
+        }
         Instant lastCustomerTime = chatHistoryService.lastCustomerMessageTime(request.getCustomerId()).orElse(null);
         if (lastCustomerTime == null || Duration.between(lastCustomerTime, Instant.now()).toHours() > 24) {
             crmOpenApiService.updateServingAssignmentReplyable(request.getCustomerId(), false);
@@ -245,6 +282,11 @@ public class ChatController {
             ));
         }
 
+        String recordMessage = buildMediaRecordMessage(request);
+        long localMessageId = messagePersistenceService.createOutgoing(request.getCustomerId(), request.getFrom(),
+                user.getRole() == AgentRole.TMK ? SenderType.AGENT : SenderType.MANAGER,
+                user.getAccountRowId(), user.getRole().name(), parseMessageType(request.getMediaType()), recordMessage,
+                request.getMediaId(), request.getMediaUrl(), null);
         try {
             sendMessageService.sendMediaMessage(
                     request.getFrom(),
@@ -253,7 +295,8 @@ public class ChatController {
                     request.getMediaId(),
                     request.getMediaUrl(),
                     request.getFilename(),
-                    request.getCaption()
+                    request.getCaption(),
+                    localMessageId
             );
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of(
@@ -262,14 +305,48 @@ public class ChatController {
             ));
         }
 
-        String recordMessage = buildMediaRecordMessage(request);
-        chatHistoryService.recordManualReply(request.getCustomerId(), recordMessage);
         agentDispatchService.markAgentReplied(request.getCustomerId());
 
-        String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId()).orElse(null);
+        String assignedAgent = agentDispatchService.getAssignedAgent(request.getCustomerId())
+                .or(() -> crmOpenApiService.findServingAgentRowId(request.getCustomerId()))
+                .orElse(user.getAccountRowId());
         sessionActivityService.touch(assignedAgent);
         crmOpenApiService.addChatRecord(request.getFrom(), request.getCustomerId(), assignedAgent, "人工", recordMessage);
         return ResponseEntity.ok(Map.of("success", true));
+    }
+
+    private MessageType parseMessageType(String type) {
+        if (!StringUtils.hasText(type)) return MessageType.SYSTEM;
+        try { return MessageType.valueOf(type.trim().toUpperCase()); }
+        catch (IllegalArgumentException ignored) { return MessageType.SYSTEM; }
+    }
+
+    private List<AgentCustomerView> listAgentCustomers(String agentRowId, AuthenticatedUser user) {
+        Map<String, String> activeAssignments = assignmentPersistenceService.currentAssignments();
+        if (user.getRole() == AgentRole.OWNER || user.getRole() == AgentRole.MANAGER) {
+            return chatHistoryService.listCustomers().stream()
+                    .filter(c -> chatPermissionService.canViewCustomer(user, c.getCustomerId()))
+                    .map(c -> {
+                        String status = agentRowId.equals(activeAssignments.get(c.getCustomerId())) ? "服务中" : "已关闭";
+                        return toAgentCustomerView(c, status);
+                    })
+                    .toList();
+        }
+        return chatHistoryService.listCustomers().stream()
+                .filter(c -> assignmentPersistenceService.hasServed(c.getCustomerId(), agentRowId))
+                .map(c -> toAgentCustomerView(c, agentRowId.equals(activeAssignments.get(c.getCustomerId())) ? "服务中" : "已关闭"))
+                .toList();
+    }
+
+    private AgentCustomerView toAgentCustomerView(ChatCustomer customer, String status) {
+        return AgentCustomerView.builder()
+                .customerId(customer.getCustomerId())
+                .customerNickname(customer.getCustomerNickname())
+                .lastMessage(customer.getLastMessage())
+                .lastMessageAt(customer.getLastMessageAt())
+                .serviceStatus(status)
+                .canReply("服务中".equals(status))
+                .build();
     }
 
     private String buildMediaRecordMessage(ManualMediaReplyRequest request) {

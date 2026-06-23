@@ -4,7 +4,9 @@ import com.example.aitmk.config.CrmConfig;
 import com.example.aitmk.model.domain.AssignmentRecord;
 import com.example.aitmk.model.domain.CrmAgentAccount;
 import com.example.aitmk.model.domain.CrmChatRecord;
+import com.example.aitmk.security.auth.AgentRole;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.support.CrmRelationIds;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -36,6 +38,9 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final String LOGIN_ACCOUNT_CONTROL_ID = "69abab83433ec9f4b5e6ce0e";
     private static final String LOGIN_PASSWORD_CONTROL_ID = "69abacc3433ec9f4b5e6ce25";
     private static final String LOGIN_RELATED_USER_CONTROL_ID = "69abacc3433ec9f4b5e6ce26";
+    private static final String LOGIN_ROLE_CONTROL_ID = "6a322b23cd23604cb463cc07";
+    static final String LOGIN_MANAGED_AGENTS_CONTROL_ID = "6a36b886cd23604cb4641e40";
+    private static final String LOGIN_ENABLED_CONTROL_ID = "6a322b23cd23604cb463cc08";
 
     private static final String AGENT_LOGIN_WORKSHEET_ID = "zxzt";
     private static final String AGENT_LOGIN_ACCOUNT_CONTROL_ID = "69aea988433ec9f4b5e70086";
@@ -105,9 +110,13 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     .rowId(first.path("rowid").asText())
                     .loginAccount(extractAsText(first, LOGIN_ACCOUNT_CONTROL_ID))
                     .relatedUserIds(extractAsText(first, LOGIN_RELATED_USER_CONTROL_ID))
+                    .role(AgentRole.from(extractOptionalText(first, LOGIN_ROLE_CONTROL_ID, AgentRole.TMK.name())))
+                    .managedAgentIds(CrmRelationIds.parse(first.get(LOGIN_MANAGED_AGENTS_CONTROL_ID)))
+                    .enabled(parseEnabled(extractOptionalText(first, LOGIN_ENABLED_CONTROL_ID, "启用")))
                     .build());
         } catch (Exception e) {
-            log.error("CRM verifyLogin failed", e);
+            log.warn("CRM verifyLogin failed. requestId={}, errorType={}",
+                    com.example.aitmk.model.api.v2.RequestIds.current(), e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
@@ -677,8 +686,9 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     private JsonNode post(String path, Object body) {
         try {
-            String bodyText = abbreviateSafe(body);
-            log.info("CRM post request. path={}, body={}", path, bodyText);
+            long startedAt = System.nanoTime();
+            log.debug("CRM request started. path={}, requestId={}", path,
+                    com.example.aitmk.model.api.v2.RequestIds.current());
             String resp = webClient.post()
                     .uri(crmConfig.getBaseUrl() + path)
                     .contentType(MediaType.APPLICATION_JSON)
@@ -687,13 +697,19 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     .bodyToMono(String.class)
                     .block();
             if (resp == null || resp.isBlank()) {
-                log.warn("CRM post empty response. path={}", path);
+                log.warn("CRM response empty. path={}, elapsedMs={}, requestId={}", path,
+                        (System.nanoTime()-startedAt)/1_000_000, com.example.aitmk.model.api.v2.RequestIds.current());
                 return null;
             }
-            log.info("CRM post response. path={}, body={}", path, abbreviate(resp));
-            return objectMapper.readTree(resp);
+            JsonNode result = objectMapper.readTree(resp);
+            log.debug("CRM response. path={}, success={}, errorCode={}, count={}, elapsedMs={}, requestId={}",
+                    path, result.path("success").asBoolean(false), result.path("errorCode").asText(""),
+                    result.path("data").path("total").asInt(0), (System.nanoTime()-startedAt)/1_000_000,
+                    com.example.aitmk.model.api.v2.RequestIds.current());
+            return result;
         } catch (Exception e) {
-            log.error("CRM post failed path={}", path, e);
+            log.warn("CRM request failed. path={}, errorType={}, requestId={}", path,
+                    e.getClass().getSimpleName(), com.example.aitmk.model.api.v2.RequestIds.current());
             return null;
         }
     }
@@ -749,6 +765,22 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
             return first.toString();
         }
         return node.toString();
+    }
+
+    private String extractOptionalText(JsonNode row, String fieldName, String defaultValue) {
+        if (fieldName == null || fieldName.isBlank() || row == null || !row.has(fieldName)) {
+            return defaultValue;
+        }
+        String value = extractAsText(row, fieldName);
+        return value == null || value.isBlank() ? defaultValue : value;
+    }
+
+    private boolean parseEnabled(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return true;
+        }
+        String text = raw.trim();
+        return !("停用".equals(text) || "禁用".equals(text) || "false".equalsIgnoreCase(text) || "0".equals(text));
     }
 
     /**

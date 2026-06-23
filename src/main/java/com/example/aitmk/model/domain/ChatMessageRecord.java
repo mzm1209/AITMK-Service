@@ -20,4 +20,10 @@ public class ChatMessageRecord {
     private String message;
     /** 消息时间戳。 */
     private Instant timestamp;
+    /** 实际操作人账号 rowId，用于管理员插入/代发审计。 */
+    private String operatorId;
+    /** 实际操作人角色。 */
+    private String operatorRole;
+    /** 当前负责坐席账号 rowId。 */
+    private String agentRowId;
 }

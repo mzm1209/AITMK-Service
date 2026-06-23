@@ -3,6 +3,7 @@ package com.example.aitmk.service.impl;
 import com.example.aitmk.service.AgentDispatchService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Profile;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -22,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 @Slf4j
 @Service
+@Profile("in-memory")
 public class InMemoryAgentDispatchService implements AgentDispatchService {
 
     private final Set<String> onlineAgents = new LinkedHashSet<>();
@@ -105,6 +107,14 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         if (customerAgentMap.remove(customerPhone) != null) {
             log.info("Customer unassigned from local map. customer={}, assignedCount={}", customerPhone, customerAgentMap.size());
         }
+    }
+
+    @Override
+    public synchronized Optional<String> transferCustomer(String customerPhone, String targetAgentRowId, String assignedBy) {
+        if (customerPhone == null || targetAgentRowId == null || targetAgentRowId.isBlank()) return Optional.empty();
+        customerAgentMap.put(customerPhone, targetAgentRowId.trim());
+        pendingCustomers.remove(customerPhone);
+        return Optional.of(targetAgentRowId.trim());
     }
 
     @Override

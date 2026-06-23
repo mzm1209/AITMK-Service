@@ -82,6 +82,9 @@ public class SessionTransferController {
         }
 
         try {
+            if (agentDispatchService.transferCustomer(customerPhone, target, current).isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("success", false, "message", "本地会话转移失败"));
+            }
             crmOpenApiService.closeServingAssignment(customerPhone);
             crmOpenApiService.addAssignmentRecord(customerPhone, target, "服务中");
             crmOpenApiService.assignAiReception(customerPhone);
@@ -92,10 +95,6 @@ public class SessionTransferController {
             upsert.setToAgentRowId(target);
             upsert.setTransferTime(LocalDateTime.now().format(CRM_TIME_FORMAT));
             crmOpenApiService.frontendAddRow(WORKSHEET_ID, buildControls(upsert), true);
-
-            Map<String, String> assignments = agentDispatchService.assignmentsSnapshot();
-            assignments.put(customerPhone, target);
-            agentDispatchService.replaceState(agentDispatchService.onlineAgentsSnapshot(), assignments);
 
             return ResponseEntity.ok(Map.of("success", true, "fromAgent", current, "toAgent", target));
         } catch (Exception ex) {

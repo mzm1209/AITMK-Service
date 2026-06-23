@@ -13,6 +13,10 @@ import com.example.aitmk.service.SendMessageService;
 import com.example.aitmk.service.AutoReplyScriptCacheService;
 import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.WhatsAppWebhookService;
+import com.example.aitmk.service.MessagePersistenceService;
+import com.example.aitmk.model.entity.PersistenceEnums.SentStatus;
+import com.example.aitmk.model.entity.PersistenceEnums.SenderType;
+import com.example.aitmk.model.entity.PersistenceEnums.MessageType;
 import com.example.aitmk.util.AiReplyParser;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -38,6 +42,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final CrmOpenApiService crmOpenApiService;
     private final AutoReplyScriptCacheService autoReplyScriptCacheService;
     private final WorkTimeService workTimeService;
+    private final MessagePersistenceService messagePersistenceService;
+    private final InboundMessageRetryService inboundMessageRetryService;
 
     @Override
     @Async
@@ -56,10 +62,14 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 }
 
                 entry.getChanges().forEach(change -> {
-                    if (change.getValue() == null || change.getValue().getMessages() == null) {
-                        log.info("Webhook change ignored: value/messages is null, field={}", change.getField());
+                    if (change.getValue() == null) {
+                        log.info("Webhook change ignored: value is null, field={}", change.getField());
                         return;
                     }
+                    if (change.getValue().getStatuses() != null) {
+                        change.getValue().getStatuses().forEach(status -> processStatus(status));
+                    }
+                    if (change.getValue().getMessages() == null) return;
                     log.info("Webhook change parsed. field={}, messageCount={}, contactCount={}",
                             change.getField(),
                             change.getValue().getMessages().size(),
@@ -93,6 +103,16 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             if (!StringUtils.hasText(customerPhone)) {
                 log.warn("Skip message because customer phone is blank. rawPhone={}", rawCustomerPhone);
+                return;
+            }
+
+            String externalMessageId = message == null ? null : message.getId();
+            MessagePersistenceService.IncomingResult persistenceResult = inboundMessageRetryService.persist(
+                    customerPhone, businessAccountId, externalMessageId, parsed.getType(), customerContent,
+                    parsed.getMediaId(), parsed.getMediaUrl(), resolveMimeType(message),
+                    objectMapper.writeValueAsString(message), parseEpoch(message == null ? null : message.getTimestamp()));
+            if (persistenceResult == MessagePersistenceService.IncomingResult.DUPLICATE) {
+                log.info("Duplicate webhook message ignored. externalMessageId={}", externalMessageId);
                 return;
             }
 
@@ -131,8 +151,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 1) 本地状态先更新：保证第三方调用异常不会影响本地缓存完整性
             chatHistoryService.setCustomerNickname(customerPhone, contactName);
-            chatHistoryService.recordCustomerMessage(customerPhone, customerContent);
-            agentDispatchService.markCustomerMessageAt(customerPhone);
             log.info("Local history recorded for customer message. customer={}, content={}", customerPhone, customerContent);
 
             // 2) CRM记录失败不影响主流程（但必须有明确日志）
@@ -223,6 +241,33 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
         }
     }
 
+    private void processStatus(com.example.aitmk.model.webhook.WhatsAppValue.Status status) {
+        if (status == null || !StringUtils.hasText(status.getId()) || !StringUtils.hasText(status.getStatus())) return;
+        SentStatus mapped = switch (status.getStatus().trim().toLowerCase()) {
+            case "sent" -> SentStatus.SENT;
+            case "delivered" -> SentStatus.DELIVERED;
+            case "read" -> SentStatus.READ;
+            case "failed" -> SentStatus.FAILED;
+            default -> null;
+        };
+        if (mapped != null) messagePersistenceService.updateDeliveryStatus(status.getId(), mapped, parseEpoch(status.getTimestamp()), null);
+    }
+
+    private Instant parseEpoch(String value) {
+        if (!StringUtils.hasText(value)) return Instant.now();
+        try { return Instant.ofEpochSecond(Long.parseLong(value)); }
+        catch (NumberFormatException ignored) { return Instant.now(); }
+    }
+
+    private String resolveMimeType(com.example.aitmk.model.webhook.Message message) {
+        if (message == null || !StringUtils.hasText(message.getType())) return null;
+        com.example.aitmk.model.webhook.Message.Media media = switch (message.getType()) {
+            case "image" -> message.getImage(); case "audio" -> message.getAudio();
+            case "video" -> message.getVideo(); case "document" -> message.getDocument(); default -> null;
+        };
+        return media == null ? null : media.getMime_type();
+    }
+
 
     private void doFirstReplyByScript(String businessAccountId, String customerPhone) {
         String script = autoReplyScriptCacheService.firstReplyScript();
@@ -230,8 +275,9 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             return;
         }
         try {
-            chatHistoryService.recordAiReply(customerPhone, script);
-            sendService.sendTextMessage(businessAccountId, customerPhone, script);
+            long localMessageId = messagePersistenceService.createOutgoing(customerPhone, businessAccountId,
+                    SenderType.AI, null, null, MessageType.TEXT, script, null, null, null);
+            sendService.sendTextMessage(businessAccountId, customerPhone, script, localMessageId);
             crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", script);
         } catch (Exception ex) {
             log.error("Auto-script first reply failed. customer={}", customerPhone, ex);
@@ -309,10 +355,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             String aiReplyJson = aiService.chat(customerContent);
             String aiAnswer = AiReplyParser.parseAnswer(aiReplyJson);
 
-            chatHistoryService.recordAiReply(customerPhone, aiAnswer);
+            long localMessageId = messagePersistenceService.createOutgoing(customerPhone, businessAccountId,
+                    SenderType.AI, null, null, MessageType.TEXT, aiAnswer, null, null, null);
             log.info("Local history recorded for AI reply. customer={}", customerPhone);
 
-            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer);
+            sendService.sendTextMessage(businessAccountId, customerPhone, aiAnswer, localMessageId);
 
             try {
                 boolean crmOk = crmOpenApiService.addChatRecord(businessAccountId, customerPhone, null, "AI", aiAnswer);

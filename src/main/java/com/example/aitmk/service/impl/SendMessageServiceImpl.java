@@ -2,6 +2,7 @@ package com.example.aitmk.service.impl;
 
 import com.example.aitmk.config.WhatsAppConfig;
 import com.example.aitmk.service.SendMessageService;
+import com.example.aitmk.service.MessagePersistenceService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.time.Instant;
 
 @Slf4j
 @Service
@@ -26,6 +28,7 @@ import java.util.Map;
 public class SendMessageServiceImpl implements SendMessageService {
 
     private final WhatsAppConfig config;
+    private final MessagePersistenceService messagePersistenceService;
 
     private final WebClient webClient = WebClient.builder().build();
 
@@ -73,6 +76,11 @@ public class SendMessageServiceImpl implements SendMessageService {
 
     @Override
     public void sendTextMessage(String from, String to, String message) {
+        sendTextMessage(from, to, message, null);
+    }
+
+    @Override
+    public void sendTextMessage(String from, String to, String message, Long localMessageId) {
         Map<String, Object> body = new HashMap<>();
         body.put("messaging_product", "whatsapp");
         body.put("to", to);
@@ -82,7 +90,7 @@ public class SendMessageServiceImpl implements SendMessageService {
         text.put("body", message);
         body.put("text", text);
 
-        postMessage(from, body, "sendTextMessage");
+        postMessage(from, body, "sendTextMessage", localMessageId);
     }
 
     @Override
@@ -93,6 +101,12 @@ public class SendMessageServiceImpl implements SendMessageService {
                                  String mediaUrl,
                                  String filename,
                                  String caption) {
+        sendMediaMessage(from, to, mediaType, mediaId, mediaUrl, filename, caption, null);
+    }
+
+    @Override
+    public void sendMediaMessage(String from, String to, String mediaType, String mediaId, String mediaUrl,
+                                 String filename, String caption, Long localMessageId) {
         String normalizedType = normalizeMediaType(mediaType);
 
         Map<String, String> mediaBody = new HashMap<>();
@@ -118,7 +132,7 @@ public class SendMessageServiceImpl implements SendMessageService {
         body.put("type", normalizedType);
         body.put(normalizedType, mediaBody);
 
-        postMessage(from, body, "sendMediaMessage-" + normalizedType);
+        postMessage(from, body, "sendMediaMessage-" + normalizedType, localMessageId);
     }
 
     @Override
@@ -202,7 +216,7 @@ public class SendMessageServiceImpl implements SendMessageService {
         };
     }
 
-    private void postMessage(String from, Map<String, Object> body, String actionName) {
+    private void postMessage(String from, Map<String, Object> body, String actionName, Long localMessageId) {
         String url = config.getGraphUrl() + "/" + from + "/messages";
         log.info("WhatsApp {} request. url={}, body={}", actionName, url, body);
         webClient.post()
@@ -212,8 +226,19 @@ public class SendMessageServiceImpl implements SendMessageService {
                 .bodyValue(body)
                 .retrieve()
                 .bodyToMono(String.class)
-                .doOnNext(resp -> log.info("WhatsApp {} response: {}", actionName, resp))
-                .doOnError(err -> log.error("WhatsApp {} error", actionName, err))
+                .doOnNext(resp -> {
+                    log.info("WhatsApp {} response: {}", actionName, resp);
+                    if (localMessageId != null) messagePersistenceService.markOutgoingSent(localMessageId, extractMessageId(resp), Instant.now());
+                })
+                .doOnError(err -> {
+                    log.error("WhatsApp {} error", actionName, err);
+                    if (localMessageId != null) messagePersistenceService.markOutgoingFailed(localMessageId, err.getMessage(), Instant.now());
+                })
                 .subscribe();
+    }
+
+    private String extractMessageId(String response) {
+        try { return objectMapper.readTree(response == null ? "{}" : response).path("messages").path(0).path("id").asText(null); }
+        catch (Exception ignored) { return null; }
     }
 }

@@ -4,6 +4,11 @@ import com.example.aitmk.model.domain.CrmAgentAccount;
 import com.example.aitmk.model.domain.LoginRequest;
 import com.example.aitmk.model.domain.LoginResponse;
 import com.example.aitmk.model.domain.LogoutRequest;
+import com.example.aitmk.model.api.ApiErrorResponse;
+import com.example.aitmk.security.auth.AgentRole;
+import com.example.aitmk.security.auth.CurrentUser;
+import com.example.aitmk.security.auth.JwtTokenService;
+import com.example.aitmk.security.auth.Permission;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.AgentPushService;
 import com.example.aitmk.service.CacheSyncService;
@@ -12,6 +17,7 @@ import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.impl.AgentSessionActivityService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -35,6 +41,7 @@ public class AuthController {
     private final ChatHistoryService chatHistoryService;
     private final CacheSyncService cacheSyncService;
     private final AgentSessionActivityService sessionActivityService;
+    private final JwtTokenService jwtTokenService;
 
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@Valid @RequestBody LoginRequest request) {
@@ -50,6 +57,12 @@ public class AuthController {
         }
 
         CrmAgentAccount agent = account.get();
+        if (!agent.isEnabled()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(LoginResponse.builder()
+                    .success(false)
+                    .message("账号已停用")
+                    .build());
+        }
 
         // 防重复登录：若该坐席已有“在线”记录，则不再新增在线状态记录
         Optional<String> onlineLoginRecord = crmOpenApiService.findActiveLoginRecordRowId(agent.getRowId());
@@ -66,19 +79,32 @@ public class AuthController {
 
         // 登录默认挂机，不主动领取待分配会话。
 
+        String accessToken = jwtTokenService.generateToken(agent);
         return ResponseEntity.ok(LoginResponse.builder()
                 .success(true)
                 .message("登录成功")
                 .accountRowId(agent.getRowId())
                 .relatedUserIds(agent.getRelatedUserIds())
+                .managedAgentIds(agent.getManagedAgentIds() == null ? java.util.List.of() : agent.getManagedAgentIds())
+                .role(agent.getRole().name())
+                .permissions(Permission.defaultsFor(agent.getRole()))
+                .accessToken(accessToken)
+                .expiresAt(jwtTokenService.expiresAt())
                 .build());
     }
 
     @PostMapping("/logout")
-    public ResponseEntity<LoginResponse> logout(@Valid @RequestBody LogoutRequest request) {
-        agentDispatchService.markOffline(request.getAgentRowId());
+    public ResponseEntity<?> logout(@Valid @RequestBody LogoutRequest request) {
+        var user = CurrentUser.get();
+        String targetAgentRowId = request.getAgentRowId();
+        if (!user.getAccountRowId().equals(targetAgentRowId) && user.getRole() != AgentRole.OWNER) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(ApiErrorResponse.of("FORBIDDEN", "只能登出当前账号"));
+        }
 
-        String loginRecordRowId = sessionActivityService.onLogout(request.getAgentRowId());
+        agentDispatchService.markOffline(targetAgentRowId);
+
+        String loginRecordRowId = sessionActivityService.onLogout(targetAgentRowId);
         if (loginRecordRowId != null) {
             crmOpenApiService.updateAgentLoginStatus(loginRecordRowId, "离线");
         }
@@ -86,7 +112,7 @@ public class AuthController {
         return ResponseEntity.ok(LoginResponse.builder()
                 .success(true)
                 .message("登出成功")
-                .accountRowId(request.getAgentRowId())
+                .accountRowId(targetAgentRowId)
                 .build());
     }
 }

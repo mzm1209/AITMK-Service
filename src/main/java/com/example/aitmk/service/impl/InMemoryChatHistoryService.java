@@ -5,6 +5,7 @@ import com.example.aitmk.model.domain.ChatMessageRecord;
 import com.example.aitmk.model.domain.PageResult;
 import com.example.aitmk.service.ChatHistoryService;
 import org.springframework.stereotype.Service;
+import org.springframework.context.annotation.Profile;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 适用于开发联调与轻量部署场景，服务重启后数据会丢失。
  */
 @Service
+@Profile("in-memory")
 public class InMemoryChatHistoryService implements ChatHistoryService {
 
     /**
