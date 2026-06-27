@@ -684,34 +684,70 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         body.put("sign", crmConfig.getSign());
     }
 
+    private static final int CRM_MAX_RETRIES = 3;
+    private static final long CRM_RETRY_INITIAL_BACKOFF_MS = 1000;
+    private static final long CRM_RETRY_MAX_BACKOFF_MS = 5000;
+
     private JsonNode post(String path, Object body) {
-        try {
-            long startedAt = System.nanoTime();
-            log.debug("CRM request started. path={}, requestId={}", path,
-                    com.example.aitmk.model.api.v2.RequestIds.current());
-            String resp = webClient.post()
-                    .uri(crmConfig.getBaseUrl() + path)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
-                    .retrieve()
-                    .bodyToMono(String.class)
-                    .block();
-            if (resp == null || resp.isBlank()) {
-                log.warn("CRM response empty. path={}, elapsedMs={}, requestId={}", path,
-                        (System.nanoTime()-startedAt)/1_000_000, com.example.aitmk.model.api.v2.RequestIds.current());
-                return null;
+        long backoffMs = CRM_RETRY_INITIAL_BACKOFF_MS;
+
+        for (int attempt = 0; attempt <= CRM_MAX_RETRIES; attempt++) {
+            try {
+                long startedAt = System.nanoTime();
+                if (attempt > 0) {
+                    log.info("CRM retry attempt {}/{}. path={}, requestId={}", attempt, CRM_MAX_RETRIES, path,
+                            com.example.aitmk.model.api.v2.RequestIds.current());
+                }
+                log.debug("CRM request started. path={}, requestId={}", path,
+                        com.example.aitmk.model.api.v2.RequestIds.current());
+                String resp = webClient.post()
+                        .uri(crmConfig.getBaseUrl() + path)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .bodyValue(body)
+                        .retrieve()
+                        .bodyToMono(String.class)
+                        .block();
+                if (resp == null || resp.isBlank()) {
+                    log.warn("CRM response empty. path={}, elapsedMs={}, requestId={}", path,
+                            (System.nanoTime()-startedAt)/1_000_000, com.example.aitmk.model.api.v2.RequestIds.current());
+                    return null;
+                }
+                JsonNode result = objectMapper.readTree(resp);
+                log.debug("CRM response. path={}, success={}, errorCode={}, count={}, elapsedMs={}, requestId={}",
+                        path, result.path("success").asBoolean(false), result.path("errorCode").asText(""),
+                        result.path("data").path("total").asInt(0), (System.nanoTime()-startedAt)/1_000_000,
+                        com.example.aitmk.model.api.v2.RequestIds.current());
+                return result;
+            } catch (Exception e) {
+                boolean isTransient = isTransientException(e);
+                if (attempt < CRM_MAX_RETRIES && isTransient) {
+                    log.warn("CRM request failed (retryable). path={}, attempt={}/{}, errorType={}, requestId={}",
+                            path, attempt + 1, CRM_MAX_RETRIES, e.getClass().getSimpleName(),
+                            com.example.aitmk.model.api.v2.RequestIds.current());
+                    try {
+                        Thread.sleep(backoffMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                    backoffMs = Math.min(backoffMs * 2, CRM_RETRY_MAX_BACKOFF_MS);
+                } else {
+                    log.warn("CRM request failed. path={}, errorType={}, requestId={}", path,
+                            e.getClass().getSimpleName(), com.example.aitmk.model.api.v2.RequestIds.current());
+                    break;
+                }
             }
-            JsonNode result = objectMapper.readTree(resp);
-            log.debug("CRM response. path={}, success={}, errorCode={}, count={}, elapsedMs={}, requestId={}",
-                    path, result.path("success").asBoolean(false), result.path("errorCode").asText(""),
-                    result.path("data").path("total").asInt(0), (System.nanoTime()-startedAt)/1_000_000,
-                    com.example.aitmk.model.api.v2.RequestIds.current());
-            return result;
-        } catch (Exception e) {
-            log.warn("CRM request failed. path={}, errorType={}, requestId={}", path,
-                    e.getClass().getSimpleName(), com.example.aitmk.model.api.v2.RequestIds.current());
-            return null;
         }
+        return null;
+    }
+
+    /**
+     * 判断是否为可重试的瞬时异常（连接级别，非业务级别）。
+     */
+    private boolean isTransientException(Exception e) {
+        String className = e.getClass().getSimpleName();
+        return className.contains("PrematureClose") || className.contains("ConnectTimeout")
+                || className.contains("ReadTimeout") || className.contains("WebClientRequest");
     }
 
     private static String now() {

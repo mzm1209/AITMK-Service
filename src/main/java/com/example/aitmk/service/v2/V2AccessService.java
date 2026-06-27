@@ -35,7 +35,7 @@ public class V2AccessService {
     public List<String> agentsForScope(AuthenticatedUser user, DataScope scope) {
         return switch (scope) {
             case MINE -> List.of(user.getAccountRowId());
-            case MANAGED -> user.getManagedAgentIds() == null ? List.of() : user.getManagedAgentIds();
+            case MANAGED -> { var ids = new java.util.ArrayList<>(user.getManagedAgentIds() == null ? List.of() : user.getManagedAgentIds()); ids.add(user.getAccountRowId()); yield ids; }
             case ALL -> null;
         };
     }
@@ -46,6 +46,7 @@ public class V2AccessService {
         if (user != null && user.getRole() == AgentRole.OWNER && user.hasPermission(Permission.CHAT_VIEW_ALL)) return;
         if (user != null && user.getRole() == AgentRole.MANAGER && user.hasPermission(Permission.CHAT_VIEW_MANAGED)
                 && user.getManagedAgentIds() != null && user.getManagedAgentIds().contains(id)) return;
+        if (user != null && user.getRole() == AgentRole.MANAGER && user.hasPermission(Permission.CHAT_VIEW_MANAGED) && id.equals(user.getAccountRowId())) return;
         if (user != null && user.getRole() == AgentRole.TMK && user.hasPermission(Permission.CHAT_VIEW_OWN)
                 && id.equals(user.getAccountRowId())) return;
         throw forbidden("无权查询指定坐席的数据");
@@ -64,9 +65,9 @@ public class V2AccessService {
         if (user.getRole() == AgentRole.OWNER) return user.hasPermission(Permission.CHAT_VIEW_ALL);
         if (user.getRole() == AgentRole.MANAGER) {
             return user.hasPermission(Permission.CHAT_VIEW_MANAGED)
-                    && conversation.getAssignedAgentId() != null
-                    && user.getManagedAgentIds() != null
-                    && user.getManagedAgentIds().contains(conversation.getAssignedAgentId());
+                    && (user.getAccountRowId().equals(conversation.getAssignedAgentId())
+                        || (conversation.getAssignedAgentId() != null && user.getManagedAgentIds() != null
+                            && user.getManagedAgentIds().contains(conversation.getAssignedAgentId())));
         }
         return user.getRole() == AgentRole.TMK && user.hasPermission(Permission.CHAT_VIEW_OWN)
                 && user.getAccountRowId().equals(conversation.getAssignedAgentId());
@@ -83,9 +84,23 @@ public class V2AccessService {
     public void requireReply(AuthenticatedUser user, ConversationEntity conversation) {
         requireView(user, conversation);
         require(user, Permission.CHAT_REPLY_ASSIGNED);
-        if (!user.getAccountRowId().equals(conversation.getAssignedAgentId())) {
+        if (!canReply(user, conversation.getAssignedAgentId())) {
             throw new V2Exception(HttpStatus.FORBIDDEN, "NOT_CURRENT_ASSIGNEE", "仅当前负责人可回复");
         }
+    }
+
+    /** Whether the user can reply to a conversation assigned to the given agent. */
+    public boolean canReply(AuthenticatedUser user, String assignedAgentId) {
+        if (user == null || assignedAgentId == null) return false;
+        if (user.getRole() == AgentRole.OWNER) return user.hasPermission(Permission.CHAT_REPLY_ASSIGNED);
+        if (user.getRole() == AgentRole.MANAGER) {
+            return user.hasPermission(Permission.CHAT_REPLY_ASSIGNED)
+                && (user.getAccountRowId().equals(assignedAgentId)
+                    || (user.getManagedAgentIds() != null
+                        && user.getManagedAgentIds().contains(assignedAgentId)));
+        }
+        return user.hasPermission(Permission.CHAT_REPLY_ASSIGNED)
+            && user.getAccountRowId().equals(assignedAgentId);
     }
 
     private boolean hasOwnAccess(AuthenticatedUser user) {

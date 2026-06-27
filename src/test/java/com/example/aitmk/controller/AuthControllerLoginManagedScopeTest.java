@@ -3,7 +3,7 @@ package com.example.aitmk.controller;
 import com.example.aitmk.model.domain.*;
 import com.example.aitmk.security.auth.*;
 import com.example.aitmk.service.*;
-import com.example.aitmk.service.impl.AgentSessionActivityService;
+import com.example.aitmk.service.AgentPresenceService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -19,7 +19,7 @@ class AuthControllerLoginManagedScopeTest {
         AgentPushService push=mock(AgentPushService.class);
         ChatHistoryService history=mock(ChatHistoryService.class);
         CacheSyncService cache=mock(CacheSyncService.class);
-        AgentSessionActivityService sessions=mock(AgentSessionActivityService.class);
+        AgentPresenceService sessions=mock(AgentPresenceService.class);
         JwtTokenService tokens=new JwtTokenService("login-response-test-secret-32-bytes-long",3600);
         AuthController controller=new AuthController(crm,dispatch,push,history,cache,sessions,tokens);
         when(crm.verifyLogin(anyString(),anyString())).thenReturn(Optional.of(CrmAgentAccount.builder()
@@ -38,7 +38,7 @@ class AuthControllerLoginManagedScopeTest {
     @Test void emptyCrmRelationStaysEmptyInLoginResponseAndJwt() {
         CrmOpenApiService crm=mock(CrmOpenApiService.class);
         AgentDispatchService dispatch=mock(AgentDispatchService.class);
-        AgentSessionActivityService sessions=mock(AgentSessionActivityService.class);
+        AgentPresenceService sessions=mock(AgentPresenceService.class);
         JwtTokenService tokens=new JwtTokenService("empty-login-response-test-secret-32-bytes",3600);
         AuthController controller=new AuthController(crm,dispatch,mock(AgentPushService.class),mock(ChatHistoryService.class),
                 mock(CacheSyncService.class),sessions,tokens);

@@ -76,7 +76,8 @@ public class ChatPermissionService {
         }
         if (isManager(user)) {
             List<String> managed = user.getManagedAgentIds();
-            return managed != null && managed.contains(agentRowId);
+            return (managed != null && managed.contains(agentRowId))
+                    || user.getAccountRowId().equals(agentRowId);
         }
         return agentRowId.equals(user.getAccountRowId());
     }

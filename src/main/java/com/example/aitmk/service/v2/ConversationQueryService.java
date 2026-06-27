@@ -90,7 +90,7 @@ public class ConversationQueryService {
         List<ChatMessageEntity> latest = messages.findByConversationIdOrderByCreatedAtDescIdDesc(c.getId(), PageRequest.of(0,1));
         Instant deadline = r.getLastCustomerMessageAt() == null ? null : r.getLastCustomerMessageAt().plusSeconds(86400);
         boolean replyable = c.getStatus() != PersistenceEnums.ConversationStatus.CLOSED && user.hasPermission(Permission.CHAT_REPLY_ASSIGNED)
-                && user.getAccountRowId().equals(c.getAssignedAgentId()) && deadline != null && !deadline.isBefore(Instant.now());
+                && access.canReply(user, c.getAssignedAgentId()) && deadline != null && !deadline.isBefore(Instant.now());
         return V2Mapper.conversation(c, r, state, latest.isEmpty() ? null : latest.get(0), replyable);
     }
 

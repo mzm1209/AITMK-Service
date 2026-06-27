@@ -11,8 +11,10 @@ import com.example.aitmk.repository.ResourceRepository;
 import com.example.aitmk.security.auth.AuthenticatedUser;
 import com.example.aitmk.security.auth.Permission;
 import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.CrmOpenApiService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,6 +22,7 @@ import java.time.Instant;
 
 import static com.example.aitmk.model.entity.PersistenceEnums.*;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ConversationCommandService {
@@ -27,6 +30,7 @@ public class ConversationCommandService {
     private final ResourceRepository resources;
     private final AssignmentRecordRepository assignments;
     private final AgentDispatchService agents;
+    private final CrmOpenApiService crm;
     private final V2AccessService access;
     private final RealtimeEventService events;
     private final RealtimePayloadFactory payloads;
@@ -71,6 +75,9 @@ public class ConversationCommandService {
         resources.saveAndFlush(resource);
         conversations.saveAndFlush(conversation);
 
+        // Issue 9: 同步 CRM 转接（关闭旧分配 + 创建新分配）
+        try { crm.addAssignmentRecord(resource.getCustomerPhone(), req.targetAgentId(), "服务中"); } catch (Exception ex) { log.warn("CRM add assignment for transfer failed", ex); }
+
         var assignmentPayload = new V2Api.AssignmentChangedPayload(
                 oldAgent, req.targetAgentId(), req.reason());
         appendAssignment(conversation, resource, req.targetAgentId(), assignmentPayload);
@@ -107,6 +114,8 @@ public class ConversationCommandService {
         });
         resources.saveAndFlush(resource);
         conversations.saveAndFlush(conversation);
+        // Issue 9: 同步 CRM 关闭分配
+        try { crm.closeServingAssignment(resource.getCustomerPhone()); } catch (Exception ex) { log.warn("CRM close assignment failed", ex); }
         appendConversationUpdated(conversation, conversation.getAssignedAgentId());
         return conversation;
     }

@@ -115,6 +115,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
 
             String externalMessageId = message == null ? null : message.getId();
+
+            // 在 persist 之前读取上一次客户消息时间，用于后续时效判断（防御：此时读到的值是上一条消息的时间）
+            Instant lastCustomerBefore = null;
+            {
+                ResourceEntity pre = resourceRepository.findByCustomerPhone(customerPhone).orElse(null);
+                if (pre != null) lastCustomerBefore = pre.getLastCustomerMessageAt();
+            }
             MessagePersistenceService.IncomingResult persistenceResult = inboundMessageRetryService.persist(
                     customerPhone, businessAccountId, externalMessageId, parsed.getType(), customerContent,
                     parsed.getMediaId(), parsed.getMediaUrl(), resolveMimeType(message),
@@ -124,17 +131,14 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 return;
             }
 
-            Instant lastCustomerBefore = chatHistoryService.lastCustomerMessageTime(customerPhone).orElse(null);
 
             log.info("Webhook message received. rawPhone={}, normalizedPhone={}, type={}, hasText={}, lastCustomerBefore={}",
                     rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
 
             String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
-            long hoursFromLastCustomerMessage = lastCustomerBefore == null
-                    ? -1L
-                    : Duration.between(lastCustomerBefore, Instant.now()).toHours();
 
-            if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24L * 30L) {
+            if (StringUtils.hasText(assignedAgent) && lastCustomerBefore != null
+                    && Duration.between(lastCustomerBefore, Instant.now()).toHours() > 24L * 30L) {
                 try {
                     crmOpenApiService.closeServingAssignment(customerPhone);
                 } catch (Exception ex) {
@@ -143,13 +147,8 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 agentDispatchService.unassignCustomer(customerPhone);
                 assignedAgent = null;
                 log.info("Assignment closed by 30-day rule, process as new session. customer={}", customerPhone);
-            } else if (StringUtils.hasText(assignedAgent) && hoursFromLastCustomerMessage > 24) {
-                try {
-                    crmOpenApiService.updateServingAssignmentReplyable(customerPhone, false);
-                } catch (Exception ex) {
-                    log.warn("Update replyable=false by 24-hour rule failed. customer={}", customerPhone, ex);
-                }
             } else if (StringUtils.hasText(assignedAgent)) {
+                // 非30天：客户回来发消息，恢复可回复状态；24h不可回复标记由 ReplyWindowScheduler 定时任务处理
                 try {
                     crmOpenApiService.updateServingAssignmentReplyable(customerPhone, true);
                 } catch (Exception ex) {
@@ -200,7 +199,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 ).orElse(null);
                 ResourceEntity resource = resourceRepository.findByCustomerPhone(customerPhone).orElse(null);
                 if (conversation != null && resource != null) {
+                try {
                     aiOrchestrationService.orchestrate(businessAccountId, customerPhone, customerContent, conversation, resource);
+                } catch (Exception ex) {
+                    log.error("AI orchestration failed, continue to assignment. customer={}", customerPhone, ex);
+                }
                 }
                 return;
             }
@@ -225,7 +228,11 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             ).orElse(null);
             ResourceEntity resource = resourceRepository.findByCustomerPhone(customerPhone).orElse(null);
             if (conversation != null && resource != null) {
-                aiOrchestrationService.orchestrate(businessAccountId, customerPhone, customerContent, conversation, resource);
+                try {
+                    aiOrchestrationService.orchestrate(businessAccountId, customerPhone, customerContent, conversation, resource);
+                } catch (Exception ex) {
+                    log.error("AI orchestration failed, continue to assignment. customer={}", customerPhone, ex);
+                }
             }
 
             // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）

@@ -17,6 +17,11 @@ public interface ResourceRepository extends JpaRepository<ResourceEntity, Long> 
     @Query("select r.id from ResourceEntity r")
     List<Long> findAllIds();
     Optional<ResourceEntity> findFirstByResourceStatusOrderByCreatedAtAsc(ResourceStatus status);
+
+    /** Find first PENDING resource whose phone does NOT start with prefix (for non-whitelist agents). */
+    @Query("select r from ResourceEntity r where r.resourceStatus = :status and r.customerPhone not like :prefix order by r.createdAt asc")
+    Optional<ResourceEntity> findFirstByResourceStatusAndCustomerPhoneNotLikeOrderByCreatedAtAsc(
+            @Param("status") ResourceStatus status, @Param("prefix") String prefix);
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select r from ResourceEntity r where r.customerPhone = :phone")
     Optional<ResourceEntity> findByCustomerPhoneForUpdate(@Param("phone") String phone);

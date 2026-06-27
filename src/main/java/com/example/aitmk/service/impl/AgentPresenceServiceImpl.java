@@ -3,6 +3,7 @@ package com.example.aitmk.service.impl;
 import com.example.aitmk.service.AgentPresence;
 import com.example.aitmk.service.AgentPresenceService;
 import com.example.aitmk.service.v2.RealtimeEventService;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
@@ -51,7 +52,49 @@ public class AgentPresenceServiceImpl implements AgentPresenceService {
 
     private final RealtimeEventService events;
 
+    private final com.example.aitmk.repository.AssignmentRecordRepository assignmentRepo;
+    private final com.example.aitmk.repository.ResourceRepository resourceRepo;
+
     // ==================== 公有方法 ====================
+
+    /**
+     * Restore agent ONLINE presence from existing SERVING assignment records
+     * after server restart. Without this, assignableAgents is empty and no
+     * agent can receive new customers. Also repairs inconsistent resources
+     * where PENDING_ASSIGNMENT resource has a SERVING assignment.
+     */
+    @PostConstruct
+    public void restorePresenceFromDb() {
+        // Restore ONLINE status for agents with active SERVING assignments
+        // after server restart. Without this, the in-memory assignableAgents
+        // set is empty and no agent can be assigned new customers.
+        var serving = assignmentRepo.findByStatus(
+                com.example.aitmk.model.entity.PersistenceEnums.AssignmentStatus.SERVING);
+        for (var ar : serving) {
+            String agentId = ar.getAgentId();
+            if (agentId != null && !statuses.containsKey(agentId)) {
+                statuses.put(agentId, AgentPresence.ONLINE);
+                assignableAgents.add(agentId);
+                log.info("Restored agent presence from SERVING assignment. agent={}", agentId);
+            }
+        }
+        // Also fix inconsistent resources: PENDING with SERVING assignment
+        for (var ar : serving) {
+            Long resourceId = ar.getResourceId();
+            if (resourceId != null) {
+                resourceRepo.findById(resourceId).ifPresent(r -> {
+                    if (r.getResourceStatus() == com.example.aitmk.model.entity.PersistenceEnums.ResourceStatus.PENDING_ASSIGNMENT) {
+                        r.setResourceStatus(com.example.aitmk.model.entity.PersistenceEnums.ResourceStatus.ASSIGNED);
+                        r.setAssignedAgentId(ar.getAgentId());
+                        r.setAssignedAt(ar.getCreatedAt());
+                        resourceRepo.save(r);
+                        log.warn("Repaired inconsistent resource: id={}, phone={}, agent={}", 
+                                r.getId(), r.getCustomerPhone(), ar.getAgentId());
+                    }
+                });
+            }
+        }
+    }
 
     @Override
     public void onLogin(String agentRowId, String loginRecordRowId) {

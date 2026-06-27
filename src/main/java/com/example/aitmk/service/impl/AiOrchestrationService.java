@@ -42,16 +42,28 @@ public class AiOrchestrationService {
     private final RealtimeEventService realtimeEventService;
     private final RealtimePayloadFactory realtimePayloadFactory;
     private final AutoReplyScriptCacheService autoReplyScriptCacheService;
+    private final CrmOpenApiService crmOpenApiService;
     private final ObjectMapper objectMapper;
 
     @Value("${whatsapp.default-business-account-id:}")
     private String defaultBusinessAccountId;
+
+    @org.springframework.beans.factory.annotation.Value("${ai.reply.enabled:true}")
+    private boolean aiReplyEnabled;
 
     @Value("${ai.prompt.welcome:}")
     private String welcomePrompt;
 
     @Value("${ai.prompt.after-hours-collect:}")
     private String afterHoursCollectPrompt;
+
+    // Default welcome/after-hours texts kept in Java source to avoid .properties encoding issues.
+    // Java source is always UTF-8, guaranteed by the compiler.
+    private static final String DEFAULT_WELCOME =
+            "你好，欢迎来到咨询中心。请选择您想了解的学习中心：\n1. 中心A\n2. 中心B\n3. 中心C";
+
+    private static final String DEFAULT_AFTER_HOURS =
+            "感谢您的咨询。当前为非工作时间，请留下您的信息，我们将在上班后第一时间联系您：\n1. 您想咨询哪个学习中心？\n2. 您想了解什么科目？\n3. 孩子年龄是？\n4. 您希望什么时间联系您？";
 
     private volatile Map<String, String> learningCenterMapping = new HashMap<>();
 
@@ -107,10 +119,17 @@ public class AiOrchestrationService {
             String baId, String customerPhone, String customerContent,
             ConversationEntity conversation, ResourceEntity resource
     ) {
-        if (workTimeService.isWorkingTimeNow()) {
-            sendWelcome(baId, customerPhone, conversation);
-        } else {
-            collectAfterHoursInfo(baId, customerPhone, customerContent, conversation);
+        // Always send welcome/greeting first (working time only controls AI, not auto-reply scripts)
+        sendWelcome(baId, customerPhone, conversation);
+
+        if (!workTimeService.isWorkingTimeNow()) {
+            // After hours: send collect info prompt as a text message (not dependent on AI)
+            sendAfterHoursCollectPrompt(baId, customerPhone, conversation);
+            // Switch to COLLECTING_INFO for multi-round after-hours response handling
+            ConversationEntity managed = conversationRepository.findById(conversation.getId()).orElseThrow();
+            managed.setAiState(AiState.COLLECTING_INFO);
+            conversationRepository.save(managed);
+            log.info("After-hours collect prompt sent, state switched to COLLECTING_INFO. customer={}", customerPhone);
         }
     }
 
@@ -118,31 +137,61 @@ public class AiOrchestrationService {
      * 发送欢迎语 + 学习中心选项（初始状态）。
      * 设置 AiState = WELCOME_SENT。
      */
+    /**
+     * Wrapper for aiService.chat() guarded by ai.reply.enabled.
+     * Returns null when disabled, so pre-configured prompts still work.
+     */
+    private String chatIfEnabled(String prompt) {
+        if (!aiReplyEnabled) {
+            log.debug("AI reply disabled, skipping Dify chat.");
+            return null;
+        }
+        return aiService.chat(prompt);
+    }
+
     public void sendWelcome(String businessAccountId, String customerPhone, ConversationEntity conversation) {
-        String welcomeText = welcomePrompt;
+        // Priority: CRM auto reply script > config welcomePrompt > AI generate
+        String welcomeText = autoReplyScriptCacheService.firstReplyScript();
         if (!StringUtils.hasText(welcomeText)) {
-            welcomeText = autoReplyScriptCacheService.firstReplyScript();
+            welcomeText = welcomePrompt;
         }
         if (!StringUtils.hasText(welcomeText)) {
-            log.warn("No welcome prompt configured, fallback to AI generate. customer={}", customerPhone);
-            String aiRaw = aiService.chat("新客户首次咨询，请生成友好的欢迎语并询问客户想了解哪个学习中心。");
-            welcomeText = AiReplyParser.parseAnswer(aiRaw);
+            // Neither CRM nor config has a welcome prompt — use Java constant (UTF-8 safe).
+            // Optionally fall back to AI generation if enabled.
+            if (aiReplyEnabled) {
+                log.warn("No welcome prompt configured, fallback to AI generate. customer={}", customerPhone);
+                String aiRaw = chatIfEnabled("新客户首次咨询，请生成友好的欢迎语并询问客户想了解哪个学习中心。");
+                String aiText = AiReplyParser.parseAnswer(aiRaw);
+                if (StringUtils.hasText(aiText)) {
+                    welcomeText = aiText;
+                }
+            }
             if (!StringUtils.hasText(welcomeText)) {
-                log.warn("AI welcome generation returned empty. customer={}", customerPhone);
-                return;
+                welcomeText = DEFAULT_WELCOME;
             }
         }
 
         sendAiReply(businessAccountId, customerPhone, welcomeText, conversation, null);
 
-        conversation.setAiState(AiState.WELCOME_SENT);
-        conversationRepository.save(conversation);
+        ConversationEntity managed = conversationRepository.findById(conversation.getId()).orElseThrow();
+        managed.setAiState(AiState.WELCOME_SENT);
+        conversationRepository.save(managed);
 
         // Look up resource after sending welcome (caller may pass null)
-        ResourceEntity resourceEntity = resourceRepository.findById(conversation.getResourceId()).orElse(null);
+        ResourceEntity resourceEntity = resourceRepository.findById(managed.getResourceId()).orElse(null);
         if (resourceEntity != null) {
             resourceEntity.setResourceStatus(ResourceStatus.AI_SERVING);
             resourceRepository.save(resourceEntity);
+        }
+
+        // Push realtime event to all online agents when customer is unassigned
+        if (managed.getAssignedAgentId() == null) {
+            for (String agentId : agentDispatchService.onlineAgentsSnapshot()) {
+                realtimeEventService.append("CONVERSATION_UPDATED", "CONVERSATION",
+                        managed.getId(), managed.getResourceId(), managed.getId(),
+                        agentId, managed.getVersion(),
+                        realtimePayloadFactory.conversation(managed, agentId));
+            }
         }
 
         log.info("AI welcome sent. customer={}, aiState={}", customerPhone, AiState.WELCOME_SENT);
@@ -156,10 +205,17 @@ public class AiOrchestrationService {
             String baId, String customerPhone, String customerContent,
             ConversationEntity conversation, ResourceEntity resource
     ) {
-        // 让 AI 分析客户是否选择了学习中心及相关意向信息
+        // 让 AI 分析客户是否选择了学习中心（失败时降级为默认引导回复，不影响主流程）
         String aiContext = "You already presented study center options. Customer replied: " + customerContent + "\nPlease determine if the customer selected a study center (options are CenterA, CenterB, CenterC)." + "\nIf yes, reply: CENTER_SELECTED: <center-name>. Otherwise, continue guiding the customer.";
-        String aiRaw = aiService.chat(aiContext);
-        String aiAnswer = AiReplyParser.parseAnswer(aiRaw);
+        String aiAnswer = null;
+        if (aiReplyEnabled) {
+            try {
+                String aiRaw = chatIfEnabled(aiContext);
+                aiAnswer = AiReplyParser.parseAnswer(aiRaw);
+            } catch (Exception ex) {
+                log.warn("AI welcome response analysis failed, fallback to default guidance. customer={}", customerPhone, ex);
+            }
+        }
 
         if (aiAnswer != null && (aiAnswer.contains("CENTER_SELECTED:") || aiAnswer.matches(".*中心[ABC].*"))) {
             handleLearningCenterChoice(baId, customerPhone, customerContent, conversation);
@@ -210,11 +266,16 @@ public class AiOrchestrationService {
     ) {
         String collectPrompt = StringUtils.hasText(afterHoursCollectPrompt)
                 ? afterHoursCollectPrompt
-                : "感谢您的咨询。当前为非工作时间，请留下您的信息，我们将在上班后第一时间联系您。";
+                : DEFAULT_AFTER_HOURS;
 
         String aiContext = collectPrompt + "\n\nCustomer message: " + customerContent + "\nPlease analyze if the customer provided sufficient info (such as study center, subject, age, contact time)." + "\nIf info is complete, reply: INFO_COMPLETE. Otherwise, ask for specific details.";
-        String aiRaw = aiService.chat(aiContext);
-        String aiAnswer = AiReplyParser.parseAnswer(aiRaw);
+        String aiAnswer = null;
+        try {
+            String aiRaw = chatIfEnabled(aiContext);
+            aiAnswer = AiReplyParser.parseAnswer(aiRaw);
+        } catch (Exception ex) {
+            log.warn("AI collect info analysis failed, fallback to continue collecting. customer={}", customerPhone, ex);
+        }
 
         if (aiAnswer != null && aiAnswer.contains("INFO_COMPLETE")) {
             conversation.setAiState(AiState.TRANSFERRED);
@@ -228,6 +289,18 @@ public class AiOrchestrationService {
 
             sendAiReply(businessAccountId, customerPhone, aiAnswer, conversation, null);
         }
+    }
+
+    /**
+     * Send after-hours collect info prompt as a direct text message.
+     * Uses configured afterHoursCollectPrompt or a hardcoded fallback.
+     * Does not depend on AI availability.
+     */
+    private void sendAfterHoursCollectPrompt(String baId, String customerPhone, ConversationEntity conversation) {
+        String prompt = StringUtils.hasText(afterHoursCollectPrompt)
+                ? afterHoursCollectPrompt
+                : "感谢您的咨询。当前为非工作时间，请留下您的信息，我们将在上班后第一时间联系您。";
+        sendAiReply(baId, customerPhone, prompt, conversation, null);
     }
 
     /**
@@ -247,7 +320,7 @@ public class AiOrchestrationService {
             String baId, String customerPhone, String customerContent,
             ConversationEntity conversation, ResourceEntity resource
     ) {
-        String aiRaw = aiService.chat("You are in the waiting center queue. Customer said: " + customerContent + "\nPlease politely inform the customer that agents are currently busy and they are queued for a response.");
+        String aiRaw = chatIfEnabled("You are in the waiting center queue. Customer said: " + customerContent + "\nPlease politely inform the customer that agents are currently busy and they are queued for a response.");
         String aiAnswer = AiReplyParser.parseAnswer(aiRaw);
         if (StringUtils.hasText(aiAnswer)) {
             sendAiReply(baId, customerPhone, aiAnswer, conversation, null);
@@ -278,6 +351,13 @@ public class AiOrchestrationService {
                     SenderType.AI, null, null, MessageType.TEXT, answer, null, null, null);
 
             sendMessageService.sendTextMessage(baId, customerPhone, answer, localMessageId);
+
+            // Issue 7: 同步 AI 回复到 CRM 聊天记录（失败不影响主流程）
+            try {
+                crmOpenApiService.addChatRecord(baId, customerPhone, null, "AI", answer);
+            } catch (Exception ex) {
+                log.warn("CRM add AI chat record failed. customer={}", customerPhone, ex);
+            }
 
             log.info("AI reply sent. customer={}, content={}", customerPhone,
                     answer.length() > 60 ? answer.substring(0, 60) + "..." : answer);

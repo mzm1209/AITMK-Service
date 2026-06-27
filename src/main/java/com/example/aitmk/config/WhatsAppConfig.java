@@ -14,4 +14,10 @@ public class WhatsAppConfig {
     private String verifyToken;
     private String appSecret;
 
+    /**
+     * When false, outgoing messages skip the provider API and are marked as sent immediately.
+     * Defaults to true for production safety. Set false when using WebhookManualSimulator or test environments.
+     */
+    private boolean outboundEnabled = true;
+
 }

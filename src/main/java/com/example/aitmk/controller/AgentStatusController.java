@@ -8,6 +8,7 @@ import com.example.aitmk.security.auth.CurrentUser;
 import com.example.aitmk.security.auth.AgentRole;
 import com.example.aitmk.security.permission.ChatPermissionService;
 import com.example.aitmk.service.AgentDispatchService;
+import com.example.aitmk.service.AgentOnlineAssignmentHandler;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.AgentPushService;
@@ -47,6 +48,7 @@ public class AgentStatusController {
     private final AgentPushService agentPushService;
     private final ChatHistoryService chatHistoryService;
     private final ChatPermissionService chatPermissionService;
+    private final AgentOnlineAssignmentHandler assignmentHandler;
     private final AgentPresenceService presenceService;
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentStatusController.class);
 
@@ -78,25 +80,9 @@ public class AgentStatusController {
                     }
                 });
 
-        // 3. 如果目标状态是 ONLINE，尝试领取待分配客户（最多 10 个）
+        // 3. 如果目标状态是 ONLINE，异步领取待分配客户（不阻塞响应）
         if (target == AgentPresence.ONLINE) {
-            int maxAssignments = 10;
-            int assigned = 0;
-            while (assigned < maxAssignments) {
-                try {
-                    var pending = agentDispatchService.assignOnePendingCustomerToAgent(request.getAgentRowId().trim());
-                    if (pending.isEmpty()) {
-                        break;
-                    }
-                    String customerPhone = pending.get();
-                    crmOpenApiService.addAssignmentRecord(customerPhone, request.getAgentRowId().trim(), "服务中");
-                    crmOpenApiService.assignAiReception(customerPhone);
-                    agentPushService.pushHistory(request.getAgentRowId().trim(), customerPhone, chatHistoryService.listMessages(customerPhone));
-                    assigned++;
-                } catch (Exception ex) {
-                    log.warn("Pending customer assignment failed, continue. agent={}", request.getAgentRowId().trim(), ex);
-                }
-            }
+            assignmentHandler.assignPendingCustomers(request.getAgentRowId().trim(), 10);
         }
 
         return ResponseEntity.ok(Map.of("success", true, "message", "状态更新成功"));

@@ -51,12 +51,6 @@ public interface AgentDispatchService {
      */
     void markAgentReplied(String customerPhone);
 
-    /**
-     * 扫描超时会话：
-     * - overdueWarnCustomers: 超过 warnMinutes 但未超过 reclaimMinutes
-     * - reclaimedCustomers: 超过 reclaimMinutes，且已从分配关系中释放
-     */
-    TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes);
 
-    record TimeoutScanResult(Set<String> overdueWarnCustomers, Set<String> reclaimedCustomers) {}
+
 }

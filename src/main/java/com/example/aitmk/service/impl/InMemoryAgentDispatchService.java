@@ -191,10 +191,6 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         // 超时回收逻辑已下线，不再记录本地时间戳
     }
 
-    @Override
-    public synchronized TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes) {
-        return new TimeoutScanResult(Set.of(), Set.of());
-    }
 
     private String selectByLayeredScore() {
         Map<String, Integer> onlineByLevel = new HashMap<>();

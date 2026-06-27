@@ -5,8 +5,10 @@ import com.example.aitmk.model.api.v2.V2Api.*;
 import com.example.aitmk.model.entity.*;
 import com.example.aitmk.repository.*;
 import com.example.aitmk.security.auth.*;
+import com.example.aitmk.service.CrmOpenApiService;
 import com.example.aitmk.service.SendMessageService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,11 +17,12 @@ import org.springframework.util.StringUtils;
 import java.time.Instant;
 import static com.example.aitmk.model.entity.PersistenceEnums.*;
 
-@Service @RequiredArgsConstructor
+@Slf4j @Service @RequiredArgsConstructor
 public class MessageCommandService {
     private final ConversationRepository conversations; private final ResourceRepository resources;
     private final ChatMessageRepository messages; private final V2AccessService access;
     private final RealtimeEventService events; private final RealtimePayloadFactory payloads; private final SendMessageService sender;
+    private final CrmOpenApiService crm;
 
     @Transactional
     public MessageView send(Long conversationId, String key, SendMessageRequest req, AuthenticatedUser user) {
@@ -45,7 +48,12 @@ public class MessageCommandService {
         resources.saveAndFlush(r);conversations.saveAndFlush(c);
         events.append("MESSAGE_CREATED","MESSAGE",m.getId(),r.getId(),c.getId(),c.getAssignedAgentId(),c.getVersion(),payloads.message(m));
         long id=m.getId();
-        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){public void afterCommit(){if(type==MessageType.TEXT)sender.sendTextMessage(c.getBusinessAccountId(),r.getCustomerPhone(),req.content(),id);else sender.sendMediaMessage(c.getBusinessAccountId(),r.getCustomerPhone(),type.name().toLowerCase(),media.mediaId(),null,media.fileName(),req.content(),id);}});
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){public void afterCommit(){
+            if(type==MessageType.TEXT)sender.sendTextMessage(c.getBusinessAccountId(),r.getCustomerPhone(),req.content(),id);
+            else sender.sendMediaMessage(c.getBusinessAccountId(),r.getCustomerPhone(),type.name().toLowerCase(),media.mediaId(),null,media.fileName(),req.content(),id);
+            // Issue 10: 同步坐席回复到 CRM 聊天记录（失败不影响主流程）
+            try { crm.addChatRecord(c.getBusinessAccountId(),r.getCustomerPhone(),user.getAccountRowId(),"人工",req.content()); } catch(Exception ex) { log.warn("CRM add agent chat record failed",ex); }
+        }});
         return V2Mapper.message(m);
     }
     private MessageType parse(String value){try{return MessageType.valueOf((value==null?"TEXT":value).toUpperCase());}catch(Exception e){throw new V2Exception(HttpStatus.BAD_REQUEST,"MESSAGE_TYPE_INVALID","不支持的消息类型");}}

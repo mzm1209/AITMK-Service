@@ -37,6 +37,9 @@ public class AgentInactiveScheduler {
     private final SendMessageService sendMessageService;
     private final MessagePersistenceService messagePersistenceService;
 
+    @org.springframework.beans.factory.annotation.Value("${ai.reply.enabled:true}")
+    private boolean aiReplyEnabled;
+
     @Value("${agent.inactive.minutes:3}")
     private int inactiveMinutes;
 
@@ -79,6 +82,10 @@ public class AgentInactiveScheduler {
             }
 
             try {
+                if (!aiReplyEnabled) {
+                    log.debug("AI reply disabled, skipping agent-inactive AI fallback. agent={}", offlineAgentRowId);
+                    return;
+                }
                 String aiRaw = aiService.chat(last.getMessage());
                 String aiText = AiReplyParser.parseAnswer(aiRaw);
                 long localMessageId = messagePersistenceService.createOutgoing(customerPhone, defaultBusinessAccountId,

@@ -217,6 +217,18 @@ public class SendMessageServiceImpl implements SendMessageService {
     }
 
     private void postMessage(String from, Map<String, Object> body, String actionName, Long localMessageId) {
+        if (!config.isOutboundEnabled()) {
+            // Outbound messaging disabled: skip provider API call, treat as sent immediately.
+            // Used for WebhookManualSimulator testing and future TikTok integration.
+            String syntheticId = "wamid.simulated." + Instant.now().toEpochMilli();
+            log.info("WhatsApp outbound disabled. Skipping API call. action={}, to={}, syntheticId={}",
+                    actionName, body.get("to"), syntheticId);
+            if (localMessageId != null) {
+                messagePersistenceService.markOutgoingSent(localMessageId, syntheticId, Instant.now());
+            }
+            return;
+        }
+
         String url = config.getGraphUrl() + "/" + from + "/messages";
         log.info("WhatsApp {} request. url={}, body={}", actionName, url, body);
         webClient.post()

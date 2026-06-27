@@ -11,15 +11,12 @@ import com.example.aitmk.service.v2.RealtimePayloadFactory;
 import com.example.aitmk.model.api.v2.V2Api;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.context.annotation.Primary;
 import jakarta.persistence.EntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.transaction.annotation.Propagation;
 import org.springframework.util.StringUtils;
-import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -40,15 +37,8 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     private final RealtimePayloadFactory payloads;
     private final AgentPresenceService presenceService;
     private final Map<String, AgentProfile> profiles = new ConcurrentHashMap<>();
-    @Lazy
-    @Autowired
-    private PersistentAgentDispatchService self;
     @PersistenceContext
     private EntityManager entityManager;
-    @org.springframework.beans.factory.annotation.Value("${test.resource.phone-prefix:69906210000}")
-    private String testPhonePrefix;
-    @org.springframework.beans.factory.annotation.Value("${test.agent.whitelist:c5c62f71-fa3e-4256-9ef8-6fa1039bd824,1e09631a-4c21-4992-89cf-faefe1de684f,d7f38a2f-f905-4b45-989e-d2ff02d9b88f,9a9defde-6b75-4343-81a2-45c04bcb1b58}")
-    private String testAgentWhitelist;
     private final AtomicInteger roundRobin = new AtomicInteger();
     private static final EnumSet<ConversationStatus> ACTIVE = EnumSet.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE);
 
@@ -57,7 +47,7 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     @Override public boolean hasOnlineAgent() { return !presenceService.assignableAgents().isEmpty(); }
     @Override @Transactional(readOnly = true) public Optional<String> getAssignedAgent(String phone) { return currentAgent(phone); }
 
-    @Override @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    @Override @Transactional
     public Optional<String> assignIfAbsent(String phone) {
         if (!StringUtils.hasText(phone)) return Optional.empty();
         ResourceEntity resource = lockOrCreate(phone);
@@ -65,7 +55,7 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
             log.debug("assignIfAbsent: resource {} already assigned to agent {}", resource.getId(), resource.getAssignedAgentId());
             return Optional.of(resource.getAssignedAgentId());
         }
-        String selected = selectAgent(phone);
+        String selected = selectAgent();
         if (selected == null) { resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT); resources.save(resource); return Optional.empty(); }
         return assignLocked(resource, selected, AssignType.AUTO, "SYSTEM");
     }
@@ -82,7 +72,7 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         resources.findByCustomerPhoneForUpdate(phone).ifPresent(resource -> closeAssignment(resource, "UNASSIGNED", AssignmentStatus.CLOSED));
     }
 
-    @Override @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    @Override @Transactional
     public Optional<String> transferCustomer(String phone, String target, String assignedBy) {
         if (!StringUtils.hasText(target)) return Optional.empty();
         ResourceEntity resource = resources.findByCustomerPhoneForUpdate(phone).orElse(null);
@@ -92,22 +82,10 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
                 StringUtils.hasText(assignedBy) ? assignedBy.trim() : "SYSTEM");
     }
 
-    @Override @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    @Override @Transactional
     public Optional<String> assignOnePendingCustomerToAgent(String agent) {
         if (!StringUtils.hasText(agent)) return Optional.empty();
-        // Try PENDING_ASSIGNMENT first, then AI_SERVING as fallback.
-        // Non-whitelist agents skip test resources (phone prefix match).
-        // Whitelist agents can pick up any pending resource (test or real).
-        ResourceEntity candidate = null;
-        for (ResourceStatus status : new ResourceStatus[]{ResourceStatus.PENDING_ASSIGNMENT, ResourceStatus.AI_SERVING}) {
-            if (isWhitelistAgent(agent)) {
-                candidate = resources.findFirstByResourceStatusOrderByCreatedAtAsc(status).orElse(null);
-            } else {
-                candidate = resources.findFirstByResourceStatusAndCustomerPhoneNotLikeOrderByCreatedAtAsc(
-                        status, testPhonePrefix + "%").orElse(null);
-            }
-            if (candidate != null) break;
-        }
+        ResourceEntity candidate = resources.findFirstByResourceStatusOrderByCreatedAtAsc(ResourceStatus.PENDING_ASSIGNMENT).orElse(null);
         if (candidate == null) return Optional.empty();
         ResourceEntity locked = resources.findByCustomerPhoneForUpdate(candidate.getCustomerPhone()).orElse(null);
         if (locked == null || locked.getAssignedAgentId() != null) return Optional.empty();
@@ -150,7 +128,19 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         });
     }
 
-
+    @Override @Transactional
+    public TimeoutScanResult scanTimeouts(int warnMinutes, int reclaimMinutes) {
+        Instant now = Instant.now(); Set<String> warn = new HashSet<>(), reclaimed = new HashSet<>();
+        for (Long resourceId : resources.findAllIds()) {
+            ResourceEntity r = resources.findByIdForUpdate(resourceId).orElse(null);
+            if (r == null) continue;
+            if (r.getAssignedAgentId() == null || r.getLastCustomerMessageAt() == null) continue;
+            long minutes = Duration.between(r.getLastCustomerMessageAt(), now).toMinutes();
+            if (minutes >= reclaimMinutes) { closeAssignment(r, "TIMEOUT", AssignmentStatus.CLOSED); reclaimed.add(r.getCustomerPhone()); }
+            else if (minutes >= warnMinutes) warn.add(r.getCustomerPhone());
+        }
+        return new TimeoutScanResult(warn, reclaimed);
+    }
 
     @Override @Transactional(readOnly = true)
     public Optional<String> currentAgent(String phone) {
@@ -173,18 +163,14 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         AssignmentRecordEntity record = new AssignmentRecordEntity();
         record.setResourceId(resource.getId()); record.setConversationId(conversation == null ? null : conversation.getId());
         record.setCustomerPhone(resource.getCustomerPhone()); record.setAgentId(agent); record.setAssignedBy(by); record.setAssignType(type);
-        // Check for existing SERVING assignment before INSERT to avoid tainting the transaction.
-        // When the DB unique constraint fires (uq_assignment_active_resource), the Hibernate
-        // session becomes unrecoverable even with noRollbackFor on the caller, which kills the
-        // outer updateStatus transaction and prevents agents from going ONLINE.
-        var existingServing = assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(
-                resource.getId(), AssignmentStatus.SERVING);
-        if (existingServing.isPresent()) {
-            log.warn("assignLocked: existing SERVING for resource {}, returning existing agent={}",
-                    resource.getId(), existingServing.get().getAgentId());
-            return Optional.of(existingServing.get().getAgentId());
+        try { assignments.saveAndFlush(record); }
+        catch (DataIntegrityViolationException duplicate) {
+            entityManager.clear();
+            var existing = assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(resource.getId(), AssignmentStatus.SERVING);
+            log.warn("assignLocked: duplicate SERVING for resource {}, returning existing agent={}",
+                    resource.getId(), existing.map(AssignmentRecordEntity::getAgentId).orElse("?"));
+            return existing.map(AssignmentRecordEntity::getAgentId);
         }
-        assignments.saveAndFlush(record);
         String oldAgent = resource.getAssignedAgentId();
         resource.setAssignedAgentId(agent); resource.setAssignedAt(now); resource.setResourceStatus(ResourceStatus.ASSIGNED); resources.saveAndFlush(resource);
         if (conversation != null) {
@@ -203,10 +189,10 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     private void closeAssignment(ResourceEntity resource, String reason, AssignmentStatus finalStatus) {
         Instant now = Instant.now();
         assignments.findFirstByResourceIdAndStatusOrderByAssignedAtDesc(resource.getId(), AssignmentStatus.SERVING).ifPresent(a -> {
-            a.setStatus(finalStatus); a.setReplyable(false); a.setClosedAt(now); a.setCloseReason(reason); assignments.saveAndFlush(a);
+            a.setStatus(finalStatus); a.setReplyable(false); a.setClosedAt(now); a.setCloseReason(reason); assignments.save(a);
         });
         String oldAgent = resource.getAssignedAgentId();
-        resource.setAssignedAgentId(null); resource.setAssignedAt(null); resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT); resource.setLastCustomerMessageAt(null); resources.saveAndFlush(resource); // Issue 1: 关闭分配时重置 lCMAt
+        resource.setAssignedAgentId(null); resource.setAssignedAt(null); resource.setResourceStatus(ResourceStatus.PENDING_ASSIGNMENT); resources.saveAndFlush(resource);
         conversations.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(resource.getId(), ACTIVE).ifPresent(c -> {
             c.setAssignedAgentId(null); c.setStatus(ConversationStatus.AI_ACTIVE); conversations.saveAndFlush(c);
             if (oldAgent != null) {
@@ -222,25 +208,14 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
         if (!StringUtils.hasText(phone)) throw new IllegalArgumentException("customerPhone must not be blank");
         return resources.findByCustomerPhoneForUpdate(phone).orElseGet(() -> { ResourceEntity r = new ResourceEntity(); r.setCustomerPhone(phone); r.setSourceExternalId(phone); return resources.saveAndFlush(r); });
     }
-    private String selectAgent(String phone) {
+    private String selectAgent() {
         List<String> candidates = new ArrayList<>(presenceService.assignableAgents());
         candidates.removeIf(agent -> assignments.findByAgentIdAndStatus(agent, AssignmentStatus.SERVING).size() >= profiles.getOrDefault(agent, new AgentProfile("中级", 1, 8)).maxLoad());
-        // Test resources: only assign to whitelisted test agents
-        if (isTestPhone(phone)) {
-            candidates.removeIf(agent -> !isWhitelistAgent(agent));
-        }
         if (candidates.isEmpty()) return null;
         return candidates.get(Math.floorMod(roundRobin.getAndIncrement(), candidates.size()));
     }
     private Instant max(Instant current, Instant candidate) {
         return current == null || candidate.isAfter(current) ? candidate : current;
     }
-    private boolean isTestPhone(String phone) {
-        return phone != null && phone.startsWith(testPhonePrefix);
-    }
-    private boolean isWhitelistAgent(String agentId) {
-        return agentId != null && java.util.Arrays.asList(testAgentWhitelist.split(",")).contains(agentId.trim());
-    }
-
     private record AgentProfile(String level, double weight, int maxLoad) {}
 }

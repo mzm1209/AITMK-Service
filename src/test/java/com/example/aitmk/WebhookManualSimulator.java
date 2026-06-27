@@ -18,7 +18,7 @@ import java.time.Instant;
  *
  * 参数：
  * 1) webhook 地址（默认 http://localhost:6153/webhook）
- * 2) 客户手机号 from（默认 6288880000111）
+ * 2) 客户手机号 from（默认 6990621000100，测试专用前缀）
  * 3) business phone_number_id（默认 1019964791197772）
  * 4) 模式 ad/plain（默认 ad，ad 模式会带 referral 广告信息）
  * 5) 连续发送条数（默认 1）
@@ -28,7 +28,7 @@ public class WebhookManualSimulator {
 
     public static void main(String[] args) throws Exception {
         String webhookUrl = args.length > 0 ? args[0] : "http://localhost:6153/webhook";
-        String from = args.length > 1 ? args[1] : "6288880000111";
+        String from = args.length > 1 ? args[1] : "6990621000105";
         String phoneNumberId = args.length > 2 ? args[2] : "1019964791197772";
         String mode = args.length > 3 ? args[3] : "ad";
         int count = args.length > 4 ? Integer.parseInt(args[4]) : 1;
