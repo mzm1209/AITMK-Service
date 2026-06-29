@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import jakarta.annotation.Nullable;
 
 public interface CrmOpenApiService {
 
@@ -73,6 +74,23 @@ public interface CrmOpenApiService {
      * 面向IM前端的CRM通用删除接口。
      */
     JsonNode frontendDeleteRow(String worksheetId, String rowId, boolean triggerWorkflow);
+
+    /**
+     * Get worksheet field definitions (control metadata, dropdown options, etc.)
+     * from CRM OpenAPI.
+     * @param worksheetId e.g. "leads_bank"
+     * @return raw CRM JSON response
+     */
+    JsonNode getWorksheetInfo(String worksheetId);
+
+    /**
+     * Query a single clue row by rowId from CRM.
+     * @param worksheetId e.g. "leads_bank"
+     * @param rowId CRM rowId
+     * @return the matching row JsonNode, or null if not found
+     */
+    @Nullable
+    JsonNode getRowByRowId(String worksheetId, String rowId);
 
     List<AssignmentRecord> listAssignments();
 

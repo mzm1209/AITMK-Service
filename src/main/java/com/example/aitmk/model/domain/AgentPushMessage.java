@@ -3,6 +3,7 @@ package com.example.aitmk.model.domain;
 import lombok.Builder;
 import lombok.Data;
 
+import com.example.aitmk.model.domain.LeadRecord;
 import java.util.List;
 
 /**
@@ -17,4 +18,6 @@ public class AgentPushMessage {
     private String agentRowId;
     private String customerPhone;
     private List<ChatMessageRecord> messages;
+    /** CRM lead data (leads_bank 21 fields); null when no lead is associated. */
+    private LeadRecord lead;
 }

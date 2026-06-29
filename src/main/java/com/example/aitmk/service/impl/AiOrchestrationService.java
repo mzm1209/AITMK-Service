@@ -39,6 +39,7 @@ public class AiOrchestrationService {
     private final MessagePersistenceService messagePersistenceService;
     private final AgentDispatchService agentDispatchService;
     private final WorkTimeService workTimeService;
+    private final ClueIntegrationService clueIntegrationService;
     private final RealtimeEventService realtimeEventService;
     private final RealtimePayloadFactory realtimePayloadFactory;
     private final AutoReplyScriptCacheService autoReplyScriptCacheService;
@@ -184,15 +185,9 @@ public class AiOrchestrationService {
             resourceRepository.save(resourceEntity);
         }
 
-        // Push realtime event to all online agents when customer is unassigned
-        if (managed.getAssignedAgentId() == null) {
-            for (String agentId : agentDispatchService.onlineAgentsSnapshot()) {
-                realtimeEventService.append("CONVERSATION_UPDATED", "CONVERSATION",
-                        managed.getId(), managed.getResourceId(), managed.getId(),
-                        agentId, managed.getVersion(),
-                        realtimePayloadFactory.conversation(managed, agentId));
-            }
-        }
+        // Do NOT broadcast to all online agents — scope-violating information leak.
+        // Assignment-specific CONVERSATION_UPDATED events are emitted by assignLocked().
+        // Unassigned conversations are discoverable through the list API (scope-filtered).
 
         log.info("AI welcome sent. customer={}, aiState={}", customerPhone, AiState.WELCOME_SENT);
     }
@@ -240,6 +235,20 @@ public class AiOrchestrationService {
                 conversation.setAssignedAgentId(agentRowId);
                 conversationRepository.save(conversation);
                 log.info("Customer transferred to agent. customer={}, agent={}", customerPhone, agentRowId);
+                try {
+                    var leadOpt = clueIntegrationService.lookupLeadByPhone(customerPhone);
+                    if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
+                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                        log.info("Lead updated after learning-center assignment. customer={}, agent={}", customerPhone, agentRowId);
+                    } else {
+                        String contactName = resourceRepository.findByCustomerPhone(customerPhone)
+                                .map(r -> r.getCustomerName()).orElse(null);
+                        clueIntegrationService.createLeadForNewCustomer(customerPhone, contactName, agentRowId);
+                        log.info("Lead created after learning-center assignment. customer={}, agent={}", customerPhone, agentRowId);
+                    }
+                } catch (Exception ex) {
+                    log.warn("Clue integration failed in learning-center assignment. customer={}, agent={}", customerPhone, agentRowId, ex);
+                }
             }, () -> {
                 conversation.setAiState(AiState.WAITING_CENTER);
                 conversationRepository.save(conversation);

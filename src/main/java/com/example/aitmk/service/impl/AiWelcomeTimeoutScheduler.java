@@ -4,6 +4,8 @@ import com.example.aitmk.model.entity.ConversationEntity;
 import com.example.aitmk.model.entity.PersistenceEnums.*;
 import com.example.aitmk.repository.ConversationRepository;
 import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.impl.ClueIntegrationService;
+import com.example.aitmk.model.domain.LeadRecord;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.v2.RealtimeEventService;
@@ -12,6 +14,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -35,6 +38,7 @@ public class AiWelcomeTimeoutScheduler {
     private final ConversationRepository conversationRepository;
     private final ResourceRepository resourceRepository;
     private final AgentDispatchService agentDispatchService;
+    private final ClueIntegrationService clueIntegrationService;
     private final WorkTimeService workTimeService;
     private final RealtimeEventService realtimeEventService;
     private final RealtimePayloadFactory realtimePayloadFactory;
@@ -82,6 +86,22 @@ public class AiWelcomeTimeoutScheduler {
                 conversationRepository.save(conversation);
                 log.info("Welcome timeout: assigned to agent. customer={}, agent={}",
                         conversation.getCustomerPhone(), agentRowId);
+                try {
+                    String phone = conversation.getCustomerPhone();
+                    var leadOpt = clueIntegrationService.lookupLeadByPhone(phone);
+                    if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
+                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                        log.info("Lead updated after welcome-timeout assignment. customer={}, agent={}", phone, agentRowId);
+                    } else {
+                        String contactName = resourceRepository.findByCustomerPhone(phone)
+                                .map(r -> r.getCustomerName()).orElse(null);
+                        clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId);
+                        log.info("Lead created after welcome-timeout assignment. customer={}, agent={}", phone, agentRowId);
+                    }
+                } catch (Exception ex) {
+                    log.warn("Clue integration failed in welcome-timeout assignment. customer={}, agent={}",
+                            conversation.getCustomerPhone(), agentRowId, ex);
+                }
 
                 realtimeEventService.append("CONVERSATION_UPDATED", "CONVERSATION",
                         conversation.getId(), conversation.getResourceId(), conversation.getId(),

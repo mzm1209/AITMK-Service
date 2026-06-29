@@ -12,4 +12,7 @@ public interface AgentPushService {
 
     /** 坐席客户端重连后，重发之前推送失败的消息。 */
     void resendFailed(String agentRowId);
+
+    /** Push lead info from CRM leads_bank to the assigned agent. */
+    void pushLeadInfo(String agentRowId, String customerPhone, com.example.aitmk.model.domain.LeadRecord lead);
 }

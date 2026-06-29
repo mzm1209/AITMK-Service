@@ -14,6 +14,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.*;
+import java.util.Objects;
 
 @Slf4j @Service @RequiredArgsConstructor
 public class ConversationQueryService {
@@ -45,7 +46,20 @@ public class ConversationQueryService {
             add(sql, params, "c.assigned_agent_id", "agent", assigned.trim());
         } else if (scopedAgents != null) {
             if (scopedAgents.isEmpty()) return new CursorPage<>(List.of(), null, false);
-            sql.append("and c.assigned_agent_id in (:scopedAgents) "); params.put("scopedAgents", scopedAgents);
+            if (scopedAgents.size() == 1) {
+                sql.append("and c.assigned_agent_id = :scopedAgent ");
+                params.put("scopedAgent", scopedAgents.get(0));
+            } else {
+                StringBuilder placeholders = new StringBuilder("and c.assigned_agent_id in (");
+                for (int i = 0; i < scopedAgents.size(); i++) {
+                    if (i > 0) placeholders.append(",");
+                    String name = "scopedAgent" + i;
+                    placeholders.append(":").append(name);
+                    params.put(name, scopedAgents.get(i));
+                }
+                placeholders.append(") ");
+                sql.append(placeholders);
+            }
         }
         if (cursor != null && !cursor.isBlank()) {
             CursorCodec.Key key = CursorCodec.decode(cursor);
@@ -56,7 +70,7 @@ public class ConversationQueryService {
         var query = em.createNativeQuery(sql.toString()); params.forEach(query::setParameter); query.setMaxResults(size + 1);
         @SuppressWarnings("unchecked") List<Number> ids = query.getResultList();
         boolean more = ids.size() > size; if (more) ids = ids.subList(0, size);
-        List<ConversationSummary> items = ids.stream().map(n -> summary(conversations.findById(n.longValue()).orElseThrow(), user)).toList();
+        List<ConversationSummary> items = ids.stream().map(n -> summary(conversations.findById(n.longValue()).orElseThrow(), user)).filter(Objects::nonNull).toList();
         String next = items.isEmpty() ? null : encode(conversations.findById(Long.valueOf(items.get(items.size()-1).conversationId())).orElseThrow());
         return new CursorPage<>(items, next, more);
     }
@@ -85,6 +99,7 @@ public class ConversationQueryService {
     }
 
     private ConversationSummary summary(ConversationEntity c, AuthenticatedUser user) {
+        if (!access.canView(user, c)) return null;
         ResourceEntity r = resources.findById(c.getResourceId()).orElseThrow();
         ConversationAgentStateEntity state = states.findByConversationIdAndAgentId(c.getId(), user.getAccountRowId()).orElse(null);
         List<ChatMessageEntity> latest = messages.findByConversationIdOrderByCreatedAtDescIdDesc(c.getId(), PageRequest.of(0,1));

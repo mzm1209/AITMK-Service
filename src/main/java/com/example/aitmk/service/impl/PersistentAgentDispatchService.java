@@ -83,6 +83,20 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     }
 
     @Override @Transactional(noRollbackFor = DataIntegrityViolationException.class)
+    public Optional<String> assignSpecific(String phone, String agent) {
+        if (!StringUtils.hasText(phone) || !StringUtils.hasText(agent)) return Optional.empty();
+        ResourceEntity resource = lockOrCreate(phone);
+        if (resource.getAssignedAgentId() != null) {
+            return Optional.of(resource.getAssignedAgentId());
+        }
+        if (!onlineAgentsSnapshot().contains(agent.trim())) {
+            log.info("assignSpecific: target agent {} not online. phone={}", agent, phone);
+            return Optional.empty();
+        }
+        return assignLocked(resource, agent.trim(), AssignType.AUTO, "SYSTEM");
+    }
+
+    @Override @Transactional(noRollbackFor = DataIntegrityViolationException.class)
     public Optional<String> transferCustomer(String phone, String target, String assignedBy) {
         if (!StringUtils.hasText(target)) return Optional.empty();
         ResourceEntity resource = resources.findByCustomerPhoneForUpdate(phone).orElse(null);
@@ -144,6 +158,12 @@ public class PersistentAgentDispatchService implements AgentDispatchService, Ass
     public void markAgentReplied(String phone) {
         Instant now = Instant.now();
         resources.findByCustomerPhoneForUpdate(phone).ifPresent(resource -> {
+            // Transition ASSIGNED → FOLLOWING_UP on first agent reply,
+            // signaling the agent has started real follow-up work.
+            if (resource.getResourceStatus() == ResourceStatus.ASSIGNED) {
+                resource.setResourceStatus(ResourceStatus.FOLLOWING_UP);
+            }
+
             resource.setLastAgentMessageAt(max(resource.getLastAgentMessageAt(), now));
             resource.setLastMessageAt(max(resource.getLastMessageAt(), now));
             resources.save(resource);

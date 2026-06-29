@@ -2,6 +2,7 @@ package com.example.aitmk.service.impl;
 
 import com.example.aitmk.model.domain.AgentPushMessage;
 import com.example.aitmk.model.domain.ChatMessageRecord;
+import com.example.aitmk.model.domain.LeadRecord;
 import com.example.aitmk.service.AgentPushService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +45,18 @@ public class WebSocketAgentPushServiceImpl implements AgentPushService {
                 .agentRowId(agentRowId)
                 .customerPhone(customerPhone)
                 .messages(List.of(message))
+                .build();
+        safeSend(agentRowId, payload);
+    }
+
+    @Override
+    public void pushLeadInfo(String agentRowId, String customerPhone, LeadRecord lead) {
+        AgentPushMessage payload = AgentPushMessage.builder()
+                .type("lead_info")
+                .agentRowId(agentRowId)
+                .customerPhone(customerPhone)
+                .messages(List.of())
+                .lead(lead)
                 .build();
         safeSend(agentRowId, payload);
     }

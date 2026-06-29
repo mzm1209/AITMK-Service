@@ -27,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import jakarta.annotation.Nullable;
 import java.util.Set;
 
 @Slf4j
@@ -74,6 +75,8 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final int CRM_CHAT_BOOTSTRAP_PAGE_SIZE = 100;
     private static final int CRM_WEBCLIENT_MAX_IN_MEMORY_BYTES = 2 * 1024 * 1024;
     private static final String CLUE_WORKSHEET_ID = "leads_bank";
+    private static final String FOLLOW_UP_WORKSHEET_ID = "follow_up";
+    private static final String APPOINTMENT_WORKSHEET_ID = "66e473021d111072e718410e";
 
     private final CrmConfig crmConfig;
     private final ObjectMapper objectMapper;
@@ -670,7 +673,9 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     }
 
     private void putCredential(Map<String, Object> body, String worksheetId) {
-        if (CLUE_WORKSHEET_ID.equals(worksheetId)
+        if ((CLUE_WORKSHEET_ID.equals(worksheetId)
+                || FOLLOW_UP_WORKSHEET_ID.equals(worksheetId)
+                || APPOINTMENT_WORKSHEET_ID.equals(worksheetId))
                 && crmConfig.getClue() != null
                 && crmConfig.getClue().getAppKey() != null
                 && !crmConfig.getClue().getAppKey().isBlank()
@@ -698,6 +703,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
                     log.info("CRM retry attempt {}/{}. path={}, requestId={}", attempt, CRM_MAX_RETRIES, path,
                             com.example.aitmk.model.api.v2.RequestIds.current());
                 }
+                log.info("CRM request body. path={}, body={}", path, abbreviateSafe(body));
                 log.debug("CRM request started. path={}, requestId={}", path,
                         com.example.aitmk.model.api.v2.RequestIds.current());
                 String resp = webClient.post()
@@ -900,4 +906,26 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
         String normalized = text.replaceAll("\\s+", " ");
         return normalized.length() > 1200 ? normalized.substring(0, 1200) + "...(truncated)" : normalized;
     }
+
+    @Override
+    public JsonNode getWorksheetInfo(String worksheetId) {
+        Map<String, Object> body = new HashMap<>();
+        putCredential(body, worksheetId);
+        body.put("worksheetId", worksheetId);
+        return post("/api/v2/open/worksheet/getWorksheetInfo", body);
+    }
+
+    @Override
+    @Nullable
+    public JsonNode getRowByRowId(String worksheetId, String rowId) {
+        if (rowId == null || rowId.isBlank()) return null;
+        List<Map<String, Object>> filters = List.of(
+                filter("rowid", rowId, 2, 1, 2));
+        JsonNode root = frontendGetFilterRows(worksheetId, filters, 1, 1, 0, List.of());
+        if (root == null || !root.path("success").asBoolean(false)) return null;
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) return null;
+        return rows.get(0);
+    }
+
 }

@@ -5,6 +5,8 @@ import com.example.aitmk.model.entity.ResourceEntity;
 import com.example.aitmk.model.entity.PersistenceEnums.*;
 import com.example.aitmk.repository.ConversationRepository;
 import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.impl.ClueIntegrationService;
+import com.example.aitmk.model.domain.LeadRecord;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.v2.RealtimeEventService;
@@ -13,6 +15,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.Query;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.util.StringUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -38,6 +41,7 @@ public class AfterHoursTransitionScheduler {
     private final ConversationRepository conversationRepository;
     private final ResourceRepository resourceRepository;
     private final AgentDispatchService agentDispatchService;
+    private final ClueIntegrationService clueIntegrationService;
     private final WorkTimeService workTimeService;
     private final RealtimeEventService realtimeEventService;
     private final RealtimePayloadFactory realtimePayloadFactory;
@@ -82,6 +86,21 @@ public class AfterHoursTransitionScheduler {
                     conversationRepository.save(conversation);
                     log.info("After-hours transition: assigned agent. customer={}, agent={}",
                             conversation.getCustomerPhone(), agentRowId);
+                    try {
+                        String phone = conversation.getCustomerPhone();
+                        var leadOpt = clueIntegrationService.lookupLeadByPhone(phone);
+                        if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
+                            clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                            log.info("Lead updated after after-hours assignment. customer={}, agent={}", phone, agentRowId);
+                        } else {
+                            String contactName = resource.getCustomerName();
+                            clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId);
+                            log.info("Lead created after after-hours assignment. customer={}, agent={}", phone, agentRowId);
+                        }
+                    } catch (Exception ex) {
+                        log.warn("Clue integration failed in after-hours assignment. customer={}, agent={}",
+                                conversation.getCustomerPhone(), agentRowId, ex);
+                    }
 
                     realtimeEventService.append("CONVERSATION_UPDATED", "CONVERSATION",
                             conversation.getId(), conversation.getResourceId(), conversation.getId(),

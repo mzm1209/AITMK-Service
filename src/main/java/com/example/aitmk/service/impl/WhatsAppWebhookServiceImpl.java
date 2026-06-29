@@ -15,6 +15,8 @@ import com.example.aitmk.service.WorkTimeService;
 import com.example.aitmk.service.WhatsAppWebhookService;
 import com.example.aitmk.service.MessagePersistenceService;
 import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.impl.ClueIntegrationService;
+import com.example.aitmk.model.domain.LeadRecord;
 import com.example.aitmk.repository.ConversationRepository;
 import com.example.aitmk.model.entity.PersistenceEnums.ConversationStatus;
 import com.example.aitmk.model.entity.ResourceEntity;
@@ -52,6 +54,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final AiOrchestrationService aiOrchestrationService;
     private final ConversationRepository conversationRepository;
     private final ResourceRepository resourceRepository;
+    private final ClueIntegrationService clueIntegrationService;
 
     @Override
     @Async
@@ -235,30 +238,99 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                 }
             }
 
-            // 5) 若当前有在线坐席，始终尝试本地分配（不受AI/CRM异常影响）
+            // 5) CRM lead integration + local assignment (CRM failures never block assignment)
             if (hasOnlineAgent) {
-                agentDispatchService.assignIfAbsent(customerPhone).ifPresentOrElse(agentRowId -> {
-                    log.info("Customer assigned locally. customer={}, agent={}", customerPhone, agentRowId);
+                // ── Step 5a: Look up CRM lead by phone (fallback to local DB) ──
+                LeadRecord lead = null;
+                try {
+                    lead = clueIntegrationService.lookupLeadByPhone(customerPhone).orElse(null);
+                } catch (Exception ex) {
+                    log.warn("Lead lookup failed, continue without lead data. customer={}", customerPhone, ex);
+                }
+
+                String resolvedAgent = null;
+
+                if (lead != null) {
+                    // Lead exists: check TMK
+                    java.util.Optional<String> tmkAgentRowId = java.util.Optional.empty();
+                    if (lead.hasTmk()) {
+                        try {
+                            tmkAgentRowId = clueIntegrationService.resolveTmkAgent(lead);
+                        } catch (Exception ex) {
+                            log.warn("TMK agent resolve failed. customer={}", customerPhone, ex);
+                        }
+                    }
+
+                    if (tmkAgentRowId.isPresent()
+                            && StringUtils.hasText(tmkAgentRowId.get())
+                            && agentDispatchService.onlineAgentsSnapshot().contains(tmkAgentRowId.get())) {
+                        // 1.1.1.1.1: TMK agent valid + online -> direct assignment
+                        resolvedAgent = agentDispatchService.assignSpecific(customerPhone, tmkAgentRowId.get()).orElse(null);
+                        if (resolvedAgent != null) {
+                            log.info("Lead TMK agent assigned directly. customer={}, tmkAgent={}", customerPhone, resolvedAgent);
+                            if (StringUtils.hasText(lead.getRowId())) {
+                                try {
+                                    clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent);
+                                } catch (Exception ex) {
+                                    log.warn("Lead update after direct TMK assignment failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
+                                }
+                            }
+                        }
+                    } else {
+                        // 1.1.1.1.2 / 1.1.1.2: normal assignment + update lead
+                        resolvedAgent = agentDispatchService.assignIfAbsent(customerPhone).orElse(null);
+                        if (resolvedAgent != null && StringUtils.hasText(lead.getRowId())) {
+                            try {
+                                clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent);
+                            } catch (Exception ex) {
+                                log.warn("Lead update failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
+                            }
+                        }
+                    }
+                } else {
+                    // Lead does not exist: normal assignment + create lead
+                    resolvedAgent = agentDispatchService.assignIfAbsent(customerPhone).orElse(null);
+                    if (resolvedAgent != null) {
+                        try {
+                            lead = clueIntegrationService.createLeadForNewCustomer(
+                                    customerPhone, contactName, resolvedAgent).orElse(null);
+                        } catch (Exception ex) {
+                            log.warn("Lead create failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
+                        }
+                    }
+                }
+
+                // ── Step 5b: Push lead info to frontend ──
+                if (resolvedAgent != null && lead != null) {
                     try {
-                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, agentRowId, "服务中");
+                        agentPushService.pushLeadInfo(resolvedAgent, customerPhone, lead);
+                    } catch (Exception ex) {
+                        log.warn("Push lead info failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
+                    }
+                }
+
+                // ── Step 5c: CRM assignment record + push history (existing flow) ──
+                if (resolvedAgent != null) {
+                    final String finalAgent = resolvedAgent;
+                    try {
+                        boolean crmOk = crmOpenApiService.addAssignmentRecord(customerPhone, finalAgent, "服务中");
                         if (!crmOk) {
-                            log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, agentRowId);
+                            log.warn("CRM add assignment returned false. customer={}, agent={}", customerPhone, finalAgent);
                         }
                         crmOpenApiService.assignAiReception(customerPhone);
                     } catch (Exception ex) {
-                        log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, agentRowId, ex);
+                        log.error("CRM add assignment failed. customer={}, agent={}", customerPhone, finalAgent, ex);
                     }
-
                     try {
-                        agentPushService.pushHistory(agentRowId, customerPhone, chatHistoryService.listMessages(customerPhone));
-                        log.info("Pushed full history to agent after assignment. customer={}, agent={}", customerPhone, agentRowId);
+                        agentPushService.pushHistory(finalAgent, customerPhone, chatHistoryService.listMessages(customerPhone));
+                        log.info("Pushed full history to agent after assignment. customer={}, agent={}", customerPhone, finalAgent);
                     } catch (Exception ex) {
-                        log.error("Push history to agent failed. customer={}, agent={}", customerPhone, agentRowId, ex);
+                        log.error("Push history to agent failed. customer={}, agent={}", customerPhone, finalAgent, ex);
                     }
-                }, () -> {
+                } else {
                     agentDispatchService.markUnassigned(customerPhone);
                     log.warn("Assign failed unexpectedly, fallback mark pending. customer={}", customerPhone);
-                });
+                }
             }
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);

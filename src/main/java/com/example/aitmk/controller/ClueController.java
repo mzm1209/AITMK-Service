@@ -4,6 +4,9 @@ import com.example.aitmk.model.domain.ClueFieldQueryRequest;
 import com.example.aitmk.model.domain.ClueQueryRequest;
 import com.example.aitmk.model.domain.ClueUpsertRequest;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.service.impl.ClueIntegrationService;
+import com.example.aitmk.model.domain.LeadRecord;
+import java.util.Optional;
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -34,6 +37,7 @@ import java.util.Map;
 public class ClueController {
 
     private final CrmOpenApiService crmOpenApiService;
+    private final ClueIntegrationService clueIntegrationService;
     private static final String PHONE_CONTROL_ID = "687fa4dd005dfd294df9dc3e";
 
     /**
@@ -142,22 +146,26 @@ public class ClueController {
                     "message", "phone 不能为空"
             ));
         }
-        List<Map<String, Object>> filters = List.of(filter(PHONE_CONTROL_ID, phone.trim(), 3, 1, 1));
-        JsonNode root = crmOpenApiService.frontendGetFilterRows(
-                clueWorksheetId,
-                filters,
-                pageSize,
-                pageIndex,
-                0,
-                List.of()
-        );
-        if (root == null || !root.path("success").asBoolean(false)) {
-            return ResponseEntity.badRequest().body(failBody("按手机号查询线索失败", root));
+
+        // CRM first, local DB fallback
+        String normalizedPhone = phone.trim();
+        Optional<LeadRecord> leadOpt = clueIntegrationService.lookupLeadByPhone(normalizedPhone);
+
+        if (leadOpt.isEmpty()) {
+            return ResponseEntity.ok(Map.of(
+                    "success", true,
+                    "total", 0,
+                    "rows", List.of()
+            ));
         }
+
+        LeadRecord lead = leadOpt.get();
+        String source = lead.getRowId() != null ? "crm" : "local";
         return ResponseEntity.ok(Map.of(
                 "success", true,
-                "total", root.path("data").path("total").asInt(0),
-                "rows", root.path("data").path("rows")
+                "total", 1,
+                "rows", List.of(lead),
+                "source", source
         ));
     }
 

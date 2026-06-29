@@ -110,6 +110,17 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     }
 
     @Override
+    public synchronized Optional<String> assignSpecific(String customerPhone, String agentRowId) {
+        if (customerPhone == null || agentRowId == null || agentRowId.isBlank()) return Optional.empty();
+        String normalizedAgentId = normalizeAgentId(agentRowId);
+        if (normalizedAgentId == null || normalizedAgentId.isBlank()) return Optional.empty();
+        if (!onlineAgents.contains(normalizedAgentId)) return Optional.empty();
+        customerAgentMap.put(customerPhone, normalizedAgentId);
+        pendingCustomers.remove(customerPhone);
+        return Optional.of(normalizedAgentId);
+    }
+
+    @Override
     public synchronized Optional<String> transferCustomer(String customerPhone, String targetAgentRowId, String assignedBy) {
         if (customerPhone == null || targetAgentRowId == null || targetAgentRowId.isBlank()) return Optional.empty();
         customerAgentMap.put(customerPhone, targetAgentRowId.trim());

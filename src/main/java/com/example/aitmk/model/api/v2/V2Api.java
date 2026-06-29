@@ -2,6 +2,7 @@ package com.example.aitmk.model.api.v2;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 public final class V2Api {
     private V2Api() {}
@@ -76,4 +77,80 @@ public final class V2Api {
         Double averageResponseTime,
         long totalServed
     ) {}
+
+    // ── CRM Profile / Link Lead ──
+    public record CrmProfileView(
+            String resourceId, String customerPhone, String customerName,
+            boolean linked, String rowId,
+            Object clue, Object fieldsConfig) {}
+    public record LinkLeadRequest(String rowId) {}
+
+    // ── Appointments ──
+    public record CreateAppointmentRequest(
+            Long resourceId,
+            String leadRowId,
+            String followUpRowId,
+            String contactNumber,
+            String studentName,
+            String grade,
+            String school,
+            String parentName,
+            String programInterest,
+            String appointmentDate,
+            String appointmentInfo,
+            Object center,
+            String appointmentStatus,
+            String followUpStatus,
+            String followUpDueAt,
+            String assignedTime,
+            String visitStatus,
+            Integer interestLevel,
+            String leadsChannel,
+            String intern,
+            Boolean triggerWorkflow) {}
+    public record AppointmentView(
+            String rowId,
+            String appointmentId,
+            String contactNumber,
+            String studentName,
+            String parentName,
+            String appointmentDate,
+            String appointmentInfo,
+            String appointmentStatus,
+            String visitStatus,
+            String followUpStatus,
+            String followUpDueAt,
+            String centerName,
+            String staffName,
+            String leadRowId,
+            String followUpRowId,
+            Map<String, Object> raw) {}
+    public record AppointmentListView(List<AppointmentView> rows, int total) {}
+
+    // ── Follow-ups ──
+    public record CreateFollowUpRequest(
+            Long resourceId,
+            String leadRowId,
+            String type,
+            String summary,
+            String details,
+            String reminderAt,
+            Object center,
+            Boolean triggerWorkflow) {}
+    public record FollowUpView(
+            String rowId,
+            String type,
+            String summary,
+            String details,
+            String reminderAt,
+            String createdAt,
+            String staffName,
+            String centerName,
+            Map<String, Object> raw) {}
+    public record FollowUpListView(List<FollowUpView> rows, int total) {}
+
+    // ── Worksheet Fields ──
+    public record WorksheetFieldsView(String worksheetId, String worksheetName, List<FieldConfigView> fields) {}
+    public record FieldConfigView(String controlId, String controlName, int dataType, List<FieldOption> options) {}
+    public record FieldOption(String key, String value) {}
 }

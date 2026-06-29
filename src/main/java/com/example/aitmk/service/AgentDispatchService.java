@@ -28,6 +28,12 @@ public interface AgentDispatchService {
         return Optional.empty();
     }
 
+    /**
+     * Directly assign a specific customer to a target agent, bypassing round-robin.
+     * Used when CRM lead TMK field points to a valid online agent.
+     */
+    Optional<String> assignSpecific(String customerPhone, String agentRowId);
+
     Optional<String> assignOnePendingCustomerToAgent(String agentRowId);
 
     Set<String> onlineAgentsSnapshot();
