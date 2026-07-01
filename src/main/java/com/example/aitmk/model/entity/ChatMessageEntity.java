@@ -37,5 +37,14 @@ public class ChatMessageEntity {
     @Column(name = "failure_code", length = 128) private String failureCode;
     @Column(name = "retry_of_message_id") private Long retryOfMessageId;
     @Column(name = "created_at", nullable = false) private Instant createdAt;
+    @Column(name = "referral_source_type", length = 64) private String referralSourceType;
+    @Column(name = "referral_source_id", length = 191) private String referralSourceId;
+    @Column(name = "referral_source_url", length = 1024) private String referralSourceUrl;
+    @Column(name = "referral_headline", length = 1024) private String referralHeadline;
+    @Column(name = "referral_body", length = 4096) private String referralBody;
+    @Column(name = "referral_image_url", length = 1024) private String referralImageUrl;
+    @Column(name = "referral_thumbnail_url", length = 1024) private String referralThumbnailUrl;
+    @Column(name = "referral_welcome_text", length = 4096) private String referralWelcomeText;
+
     @PrePersist void prePersist() { if (createdAt == null) createdAt = Instant.now(); }
 }

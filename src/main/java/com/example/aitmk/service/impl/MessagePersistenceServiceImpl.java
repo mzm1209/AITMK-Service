@@ -7,6 +7,7 @@ import com.example.aitmk.model.entity.PersistenceEnums.*;
 import com.example.aitmk.repository.ChatMessageRepository;
 import com.example.aitmk.repository.ConversationRepository;
 import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.BusinessResourceService;
 import com.example.aitmk.service.ConversationService;
 import com.example.aitmk.service.MessagePersistenceService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ import com.example.aitmk.service.v2.RealtimePayloadFactory;
 @RequiredArgsConstructor
 public class MessagePersistenceServiceImpl implements MessagePersistenceService {
     private final ResourceRepository resourceRepository;
+    private final BusinessResourceService businessResourceService;
     private final ConversationRepository conversationRepository;
     private final ChatMessageRepository messageRepository;
     private final ConversationService conversationService;
@@ -38,14 +40,12 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
     @Override
     @Transactional(propagation = Propagation.REQUIRES_NEW)
     public IncomingResult recordIncoming(String phone, String accountId, String externalId, String type, String content,
-                               String mediaId, String mediaUrl, String mimeType, String rawPayload, Instant receivedAt) {
+                               String mediaId, String mediaUrl, String mimeType, String rawPayload, Instant receivedAt,
+                               String referralSourceType, String referralSourceId, String referralSourceUrl,
+                               String referralHeadline, String referralBody, String referralImageUrl,
+                               String referralThumbnailUrl, String referralWelcomeText) {
         if (StringUtils.hasText(externalId) && messageRepository.existsByExternalMessageId(externalId)) return IncomingResult.DUPLICATE;
-        ResourceEntity resource = resourceRepository.findByCustomerPhoneForUpdate(phone).orElseGet(() -> {
-            ResourceEntity created = new ResourceEntity();
-            created.setCustomerPhone(phone);
-            created.setSourceExternalId(phone);
-            return resourceRepository.saveAndFlush(created);
-        });
+        ResourceEntity resource = businessResourceService.getOrCreateByPhone(phone);
         ConversationEntity conversation = conversationService.getOrCreateActive(resource, accountId, "META");
         Instant at = receivedAt == null ? Instant.now() : receivedAt;
         ChatMessageEntity message = new ChatMessageEntity();
@@ -61,6 +61,14 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
         message.setMediaUrl(mediaUrl);
         message.setMimeType(mimeType);
         message.setRawPayload(rawPayload);
+        message.setReferralSourceType(referralSourceType);
+        message.setReferralSourceId(referralSourceId);
+        message.setReferralSourceUrl(referralSourceUrl);
+        message.setReferralHeadline(referralHeadline);
+        message.setReferralBody(referralBody);
+        message.setReferralImageUrl(referralImageUrl);
+        message.setReferralThumbnailUrl(referralThumbnailUrl);
+        message.setReferralWelcomeText(referralWelcomeText);
         message.setSentStatus(SentStatus.DELIVERED);
         message.setDeliveredAt(at);
         message.setCreatedAt(at);

@@ -42,7 +42,7 @@ public final class V2Api {
             String messageId, String conversationId, String resourceId, String externalMessageId,
             String clientRequestId, String senderType, String senderId, String messageType, String content,
             MediaView media, String sentStatus, String failureCode, String failureReason, Instant createdAt,
-            Instant sentAt, Instant deliveredAt, Instant readAt) {}
+            Instant sentAt, Instant deliveredAt, Instant readAt, ReferralView referral) {}
     public record ResourceView(
             String resourceId, String customerPhone, String customerName, String sourceChannel,
             String resourceType, String resourceStatus, AgentBrief assignedAgent, MessageView lastMessage, Instant createdAt,
@@ -54,6 +54,9 @@ public final class V2Api {
     public record ConversationHistoryView(String conversationId, String status, Instant startedAt, long version) {}
     public record MessageMediaRequest(String mediaId, String fileName, String mimeType) {}
     public record SendMessageRequest(String messageType, String content, MessageMediaRequest media, String retryOfMessageId) {}
+    public record ReferralView(
+            String sourceType, String sourceId, String sourceUrl,
+            String headline, String body, String imageUrl, String thumbnailUrl, String welcomeText) {}
     public record SendMessageResult(MessageView message) {}
     public record MediaUploadResult(String mediaId, String fileName, String mimeType, String mediaType) {}
     public record DashboardSummary(long activeConversations, long pendingAssignments, long unreadConversations,

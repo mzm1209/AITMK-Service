@@ -11,6 +11,7 @@ import com.example.aitmk.security.auth.JwtTokenService;
 import com.example.aitmk.security.auth.Permission;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.AgentPushService;
+import com.example.aitmk.service.AgentAccountCacheService;
 import com.example.aitmk.service.CacheSyncService;
 import com.example.aitmk.service.ChatHistoryService;
 import com.example.aitmk.service.CrmOpenApiService;
@@ -42,6 +43,7 @@ public class AuthController {
     private final ChatHistoryService chatHistoryService;
     private final CacheSyncService cacheSyncService;
     private final AgentPresenceService presenceService;
+    private final AgentAccountCacheService agentAccountCache;
     private final JwtTokenService jwtTokenService;
 
     @PostMapping("/login")
@@ -74,6 +76,9 @@ public class AuthController {
             loginRecord.ifPresent(id -> presenceService.onLogin(agent.getRowId(), id));
         }
 
+
+        // 同步坐席账号到本地缓存，逐步与 CRM 解耦
+        agentAccountCache.upsert(agent.getRowId(), agent.getLoginAccount(), agent.getRole(), agent.getManagedAgentIds());
 
         // onLogin 默认状态为 AWAY（挂机），不会加入分配候选池
 

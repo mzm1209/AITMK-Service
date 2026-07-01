@@ -57,7 +57,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
     private final ClueIntegrationService clueIntegrationService;
 
     @Override
-    @Async
+    @Async("crmAsyncExecutor")
     public void process(String payload) {
         try {
             log.info("Webhook payload received: {}", abbreviate(payload));
@@ -128,7 +128,10 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             MessagePersistenceService.IncomingResult persistenceResult = inboundMessageRetryService.persist(
                     customerPhone, businessAccountId, externalMessageId, parsed.getType(), customerContent,
                     parsed.getMediaId(), parsed.getMediaUrl(), resolveMimeType(message),
-                    objectMapper.writeValueAsString(message), parseEpoch(message == null ? null : message.getTimestamp()));
+                    objectMapper.writeValueAsString(message), parseEpoch(message == null ? null : message.getTimestamp()),
+                    parsed.getReferralSourceType(), parsed.getReferralSourceId(), parsed.getReferralSourceUrl(),
+                    parsed.getReferralHeadline(), parsed.getReferralBody(), parsed.getReferralImageUrl(),
+                    parsed.getReferralThumbnailUrl(), parsed.getReferralWelcomeText());
             if (persistenceResult == MessagePersistenceService.IncomingResult.DUPLICATE) {
                 log.info("Duplicate webhook message ignored. externalMessageId={}", externalMessageId);
                 return;
@@ -264,8 +267,15 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     if (tmkAgentRowId.isPresent()
                             && StringUtils.hasText(tmkAgentRowId.get())
                             && agentDispatchService.onlineAgentsSnapshot().contains(tmkAgentRowId.get())) {
-                        // 1.1.1.1.1: TMK agent valid + online -> direct assignment
-                        resolvedAgent = agentDispatchService.assignSpecific(customerPhone, tmkAgentRowId.get()).orElse(null);
+                        // TMK agent valid + online -> try direct assignment.
+                        // assignSpecific may reject (e.g. test-phone whitelist
+                        // check); when that happens, fall through to normal assignIfAbsent.
+                        String specificResult = agentDispatchService.assignSpecific(customerPhone, tmkAgentRowId.get()).orElse(null);
+                        if (specificResult != null) {
+                            resolvedAgent = specificResult;
+                        } else {
+                            resolvedAgent = agentDispatchService.assignIfAbsent(customerPhone).orElse(null);
+                        }
                         if (resolvedAgent != null) {
                             log.info("Lead TMK agent assigned directly. customer={}, tmkAgent={}", customerPhone, resolvedAgent);
                             if (StringUtils.hasText(lead.getRowId())) {

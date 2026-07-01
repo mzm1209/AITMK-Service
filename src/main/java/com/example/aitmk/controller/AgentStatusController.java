@@ -53,6 +53,24 @@ public class AgentStatusController {
     private static final org.slf4j.Logger log = org.slf4j.LoggerFactory.getLogger(AgentStatusController.class);
 
 
+    /**
+     * Returns the current agent's own presence status (ONLINE / AWAY / OFFLINE).
+     * Used by the frontend to sync after reconnect or restart.
+     */
+    @GetMapping("/current")
+    public ResponseEntity<?> currentStatus() {
+        var user = CurrentUser.get();
+        AgentPresence presence = presenceService.currentStatus(user.getAccountRowId());
+        if (presence == null) {
+            presence = AgentPresence.OFFLINE;
+        }
+        return ResponseEntity.ok(Map.of(
+                "success", true,
+                "status", presence.name(),
+                "agentRowId", user.getAccountRowId()
+        ));
+    }
+
     @PostMapping("/update")
     public ResponseEntity<?> updateStatus(@Valid @RequestBody AgentStatusUpdateRequest request) {
         var user = CurrentUser.get();
@@ -66,23 +84,30 @@ public class AgentStatusController {
             return ResponseEntity.badRequest().body(Map.of("success", false, "message", "仅支持 在线/挂机/离线"));
         }
 
-        // 1. 先更新本地状态（立即生效）
-        presenceService.changeStatus(request.getAgentRowId().trim(), target);
+        // 1. 先更新本地状态（立即生效）。ONLINE/OFFLINE 通过分配服务进入，保证同步加载/清理分配画像。
+        String agentRowId = request.getAgentRowId().trim();
+        if (target == AgentPresence.ONLINE) {
+            agentDispatchService.markOnline(agentRowId);
+        } else if (target == AgentPresence.OFFLINE) {
+            agentDispatchService.markOffline(agentRowId);
+        } else {
+            presenceService.changeStatus(agentRowId, target);
+        }
 
         // 2. CRM 异步更新（捕获异常，不阻塞主流程）
-        crmOpenApiService.findActiveLoginRecordRowId(request.getAgentRowId().trim())
+        crmOpenApiService.findActiveLoginRecordRowId(agentRowId)
                 .ifPresent(rowId -> {
                     try {
                         crmOpenApiService.updateAgentLoginStatus(rowId, status);
                     } catch (Exception ex) {
                         log.warn("CRM status update failed, enqueue async task. agent={}, status={}",
-                                request.getAgentRowId().trim(), status, ex);
+                                agentRowId, status, ex);
                     }
                 });
 
         // 3. 如果目标状态是 ONLINE，异步领取待分配客户（不阻塞响应）
         if (target == AgentPresence.ONLINE) {
-            assignmentHandler.assignPendingCustomers(request.getAgentRowId().trim(), 10);
+            assignmentHandler.assignPendingCustomers(agentRowId);
         }
 
         return ResponseEntity.ok(Map.of("success", true, "message", "状态更新成功"));

@@ -27,7 +27,7 @@ public enum Permission {
                     RESOURCE_ASSIGN,
                     STATS_VIEW_ALL
             );
-            case TMK -> EnumSet.of(CHAT_VIEW_OWN, CHAT_VIEW_ASSIGNED, CHAT_REPLY_ASSIGNED);
+            case TMK -> EnumSet.of(CHAT_VIEW_OWN, CHAT_VIEW_ASSIGNED, CHAT_REPLY_ASSIGNED, RESOURCE_ASSIGN);
         };
     }
 }

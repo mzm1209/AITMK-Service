@@ -10,6 +10,7 @@ import com.example.aitmk.model.entity.PersistenceEnums.ConversationStatus;
 import com.example.aitmk.repository.ChatMessageRepository;
 import com.example.aitmk.repository.ConversationAgentStateRepository;
 import com.example.aitmk.repository.ResourceRepository;
+import com.example.aitmk.service.AgentAccountCacheService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,8 @@ public class RealtimePayloadFactory {
     private final ResourceRepository resources;
     private final ConversationAgentStateRepository states;
     private final ChatMessageRepository messages;
+    private final AgentAccountCacheService agentAccounts;
+    private final V2AccessService access;
 
     public MessageView message(ChatMessageEntity message) {
         return V2Mapper.message(message);
@@ -37,9 +40,12 @@ public class RealtimePayloadFactory {
         Instant deadline = resource.getLastCustomerMessageAt() == null ? null
                 : resource.getLastCustomerMessageAt().plusSeconds(86400);
         boolean replyable = targetAgentId != null
-                && targetAgentId.equals(conversation.getAssignedAgentId())
                 && conversation.getStatus() != ConversationStatus.CLOSED
-                && deadline != null && !deadline.isBefore(Instant.now());
-        return V2Mapper.conversation(conversation, resource, state, lastMessage, replyable);
+                && deadline != null && !deadline.isBefore(Instant.now())
+                && agentAccounts.getUser(targetAgentId)
+                    .map(user -> access.canReply(user, conversation.getAssignedAgentId()))
+                    .orElse(targetAgentId.equals(conversation.getAssignedAgentId()));
+        String agentName = agentAccounts.getName(conversation.getAssignedAgentId());
+        return V2Mapper.conversation(conversation, resource, state, lastMessage, replyable, agentName);
     }
 }

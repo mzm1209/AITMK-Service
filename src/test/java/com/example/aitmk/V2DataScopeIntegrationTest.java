@@ -1,11 +1,13 @@
 package com.example.aitmk;
 
 import com.example.aitmk.model.api.v2.V2Exception;
+import com.example.aitmk.model.api.v2.V2Api;
 import com.example.aitmk.model.entity.ConversationEntity;
 import com.example.aitmk.model.entity.ResourceEntity;
 import com.example.aitmk.repository.ConversationRepository;
 import com.example.aitmk.repository.ResourceRepository;
 import com.example.aitmk.security.auth.*;
+import com.example.aitmk.service.v2.ConversationCommandService;
 import com.example.aitmk.service.v2.ConversationQueryService;
 import com.example.aitmk.service.v2.DashboardService;
 import org.junit.jupiter.api.Test;
@@ -26,6 +28,7 @@ class V2DataScopeIntegrationTest {
     @Autowired ResourceRepository resources;
     @Autowired ConversationRepository conversations;
     @Autowired ConversationQueryService query;
+    @Autowired ConversationCommandService command;
     @Autowired DashboardService dashboard;
 
     @Test void ownerCanUseAllScope() {
@@ -78,6 +81,24 @@ class V2DataScopeIntegrationTest {
         assertForbidden(() -> dashboard.summary(user("tmk-1",AgentRole.TMK,List.of()),"managed"));
     }
 
+    @Test void tmkCanTransferOwnConversationToAnyTargetRoleOutsideScope() {
+        assertTransferAllowed(user("tmk-1",AgentRole.TMK,List.of()), fixture("tmk-1"), "tmk-2");
+        assertTransferAllowed(user("tmk-3",AgentRole.TMK,List.of()), fixture("tmk-3"), "manager-1");
+        assertTransferAllowed(user("tmk-4",AgentRole.TMK,List.of()), fixture("tmk-4"), "owner-1");
+    }
+
+    @Test void managerCanTransferManagedConversationToTargetsOutsideManagedScope() {
+        AuthenticatedUser manager=user("manager-1",AgentRole.MANAGER,List.of("managed-tmk"));
+        assertTransferAllowed(manager, fixture("managed-tmk"), "outside-tmk");
+        assertTransferAllowed(manager, fixture("managed-tmk"), "owner-1");
+    }
+
+    @Test void ownerCanTransferConversationToManagerOrTmk() {
+        AuthenticatedUser owner=user("owner-1",AgentRole.OWNER,List.of());
+        assertTransferAllowed(owner, fixture("manager-1"), "manager-2");
+        assertTransferAllowed(owner, fixture("manager-1"), "tmk-1");
+    }
+
     private Fixture fixture(String agent){return fixture(prefix(),agent);}
     private Fixture fixture(String prefix,String agent){
         ResourceEntity r=new ResourceEntity();r.setCustomerPhone(prefix+UUID.randomUUID().toString().replace("-","").substring(0,8));r.setAssignedAgentId(agent);r=resources.saveAndFlush(r);
@@ -87,5 +108,10 @@ class V2DataScopeIntegrationTest {
     private String prefix(){return "ds"+UUID.randomUUID().toString().replace("-","").substring(0,6);}
     private AuthenticatedUser user(String id,AgentRole role,List<String> managed){return AuthenticatedUser.builder().accountRowId(id).role(role).permissions(Set.copyOf(Permission.defaultsFor(role))).managedAgentIds(managed).build();}
     private void assertForbidden(org.assertj.core.api.ThrowableAssert.ThrowingCallable call){assertThatThrownBy(call).isInstanceOfSatisfying(V2Exception.class,e->{assertThat(e.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);assertThat(e.getCode()).isEqualTo("FORBIDDEN");});}
+    private void assertTransferAllowed(AuthenticatedUser user, Fixture fixture, String targetAgentId) {
+        command.transfer(fixture.conversation().getId(), new V2Api.TransferRequest(targetAgentId, "handoff", fixture.conversation().getVersion()), user);
+        assertThat(conversations.findById(fixture.conversation().getId()).orElseThrow().getAssignedAgentId()).isEqualTo(targetAgentId);
+        assertThat(query.transferResult(fixture.conversation().getId(), user).assignedAgent().agentId()).isEqualTo(targetAgentId);
+    }
     private record Fixture(String prefix,ResourceEntity resource,ConversationEntity conversation){}
 }

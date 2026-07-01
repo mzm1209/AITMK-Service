@@ -6,6 +6,7 @@ import com.example.aitmk.model.entity.*;
 import com.example.aitmk.model.entity.PersistenceEnums.MessageType;
 import com.example.aitmk.model.entity.PersistenceEnums.SentStatus;
 import com.example.aitmk.repository.*;
+import com.example.aitmk.service.AgentAccountCacheService;
 import com.example.aitmk.security.auth.*;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.ConversationService;
@@ -40,9 +41,11 @@ class RealtimeEventContractIntegrationTest {
     @Autowired ConversationCommandService conversationCommands;
     @Autowired MessagePersistenceService messagePersistence;
     @Autowired ConversationService conversationService;
+    @Autowired UnreadService unreadService;
     @Autowired RealtimePayloadFactory payloads;
     @Autowired RealtimeEventService events;
     @Autowired AgentDispatchService dispatch;
+    @Autowired AgentAccountCacheService agentAccounts;
     @Autowired ObjectMapper json;
 
     private String onlineAgent;
@@ -116,6 +119,48 @@ class RealtimeEventContractIntegrationTest {
         assertThat(payload(first).path("lastReadMessageId").asText()).isEqualTo(firstRead.toString());
         assertThat(payload(second).path("unreadCount").asLong()).isEqualTo(7);
         assertThat(payload(second).path("lastReadMessageId").asText()).isEqualTo(secondRead.toString());
+    }
+
+    @Test
+    void assignmentUnreadInitializationCountsExistingCustomerMessagesOnlyAndKeepsReadState() throws Exception {
+        Fixture fixture = fixture("agent-unread-init");
+        Long firstCustomer = message(fixture, "customer-a").getId();
+        message(fixture, PersistenceEnums.SenderType.AI, "welcome");
+        Long secondCustomer = message(fixture, "customer-b").getId();
+
+        unreadService.initializeForAssignment(fixture.conversation(), fixture.agent());
+
+        ConversationAgentStateEntity state = states
+                .findByConversationIdAndAgentId(fixture.conversation().getId(), fixture.agent()).orElseThrow();
+        assertThat(state.getUnreadCount()).isEqualTo(2);
+        RealtimeEventEntity unreadEvent = lastEvent(fixture, "UNREAD_COUNT_CHANGED");
+        assertThat(payload(unreadEvent).path("unreadCount").asLong()).isEqualTo(2);
+
+        unreadService.read(fixture.conversation(), fixture.agent(), secondCustomer);
+        assertThat(payloads.conversation(fixture.conversation(), fixture.agent()).unreadCount()).isZero();
+        assertThat(payloads.conversation(fixture.conversation(), fixture.agent()).lastReadMessageId())
+                .isEqualTo(secondCustomer.toString());
+
+        unreadService.initializeForAssignment(fixture.conversation(), fixture.agent());
+
+        ConversationAgentStateEntity afterRefreshLikeRead = states
+                .findByConversationIdAndAgentId(fixture.conversation().getId(), fixture.agent()).orElseThrow();
+        assertThat(afterRefreshLikeRead.getUnreadCount()).isZero();
+        assertThat(afterRefreshLikeRead.getLastReadMessageId()).isEqualTo(secondCustomer);
+        assertThat(firstCustomer).isLessThan(secondCustomer);
+    }
+
+    @Test
+    void conversationPayloadUsesTargetRoleScopeForReplyable() {
+        Fixture fixture = fixture("managed-tmk");
+        agentAccounts.upsert("manager-rt", "manager-rt", AgentRole.MANAGER, List.of("managed-tmk"));
+        agentAccounts.upsert("owner-rt", "owner-rt", AgentRole.OWNER, List.of());
+        agentAccounts.upsert("outside-tmk", "outside-tmk", AgentRole.TMK, List.of());
+
+        assertThat(payloads.conversation(fixture.conversation(), "managed-tmk").replyable()).isTrue();
+        assertThat(payloads.conversation(fixture.conversation(), "manager-rt").replyable()).isTrue();
+        assertThat(payloads.conversation(fixture.conversation(), "owner-rt").replyable()).isTrue();
+        assertThat(payloads.conversation(fixture.conversation(), "outside-tmk").replyable()).isFalse();
     }
 
     @Test
@@ -196,11 +241,15 @@ class RealtimeEventContractIntegrationTest {
     }
 
     private ChatMessageEntity message(Fixture fixture, String content) {
+        return message(fixture, PersistenceEnums.SenderType.CUSTOMER, content);
+    }
+
+    private ChatMessageEntity message(Fixture fixture, PersistenceEnums.SenderType senderType, String content) {
         ChatMessageEntity message = new ChatMessageEntity();
         message.setConversationId(fixture.conversation().getId());
         message.setResourceId(fixture.resource().getId());
         message.setCustomerPhone(fixture.resource().getCustomerPhone());
-        message.setSenderType(PersistenceEnums.SenderType.CUSTOMER);
+        message.setSenderType(senderType);
         message.setMessageType(MessageType.TEXT);
         message.setContent(content);
         return messages.saveAndFlush(message);

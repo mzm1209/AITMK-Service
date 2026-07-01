@@ -8,20 +8,26 @@ import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.util.concurrent.ThreadLocalRandom;
 
 @Slf4j @Service @RequiredArgsConstructor
 public class InboundMessageRetryService {
-    private static final int MAX_ATTEMPTS = 3;
+    private static final int MAX_ATTEMPTS = 5;
+    private static final long[] RETRY_DELAYS_MS = {200, 800, 2000, 5000, 10000};
     private final MessagePersistenceService persistence;
 
     public MessagePersistenceService.IncomingResult persist(String phone, String accountId, String externalId,
-            String type, String content, String mediaId, String mediaUrl, String mimeType, String rawPayload, Instant receivedAt) {
+            String type, String content, String mediaId, String mediaUrl, String mimeType, String rawPayload, Instant receivedAt,
+            String referralSourceType, String referralSourceId, String referralSourceUrl,
+            String referralHeadline, String referralBody, String referralImageUrl,
+            String referralThumbnailUrl, String referralWelcomeText) {
         RuntimeException last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
-                // recordIncoming 是独立 Bean 的 REQUIRES_NEW 方法，每次循环均开启新事务。
                 return persistence.recordIncoming(phone, accountId, externalId, type, content, mediaId, mediaUrl,
-                        mimeType, rawPayload, receivedAt);
+                        mimeType, rawPayload, receivedAt,
+                        referralSourceType, referralSourceId, referralSourceUrl,
+                        referralHeadline, referralBody, referralImageUrl, referralThumbnailUrl, referralWelcomeText);
             } catch (DataIntegrityViolationException ex) {
                 if (persistence.existsExternalMessage(externalId)) return MessagePersistenceService.IncomingResult.DUPLICATE;
                 last = ex;
@@ -54,7 +60,9 @@ public class InboundMessageRetryService {
     }
 
     private void backoff(int attempt) {
-        try { Thread.sleep(25L << (attempt - 1)); }
+        long base = RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)];
+        long jitter = ThreadLocalRandom.current().nextLong(base);
+        try { Thread.sleep(base + jitter); }
         catch (InterruptedException ex) { Thread.currentThread().interrupt(); throw new InboundMessagePersistenceException("入站消息重试被中断", ex); }
     }
 

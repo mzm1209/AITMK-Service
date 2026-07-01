@@ -43,7 +43,7 @@ public interface AgentDispatchService {
     void replaceState(Set<String> onlineAgents, Map<String, String> assignments);
 
     /**
-     * 为坐席设置分层分配画像（等级/权重/负载）。
+     * 为坐席设置分层分配画像。weight 参数仅为兼容旧调用方，生产分配按等级配置权重计算。
      */
     void setAgentProfile(String agentRowId, String level, double weight, int maxLoad);
 

@@ -29,6 +29,6 @@ public class ConversationV2Controller {
         return ResponseEntity.status(HttpStatus.ACCEPTED).body(Response.ok(new SendMessageResult(message.send(id,key,body,CurrentUser.get()))));
     }
     @PostMapping("/{id}/read") public Response<ReadResult> read(@PathVariable Long id,@RequestBody ReadRequest body) { var u=CurrentUser.get();return Response.ok(unread.read(query.get(id,u),u.getAccountRowId(),Long.valueOf(body.lastReadMessageId()))); }
-    @PostMapping("/{id}/transfer") public Response<ConversationDetail> transfer(@PathVariable Long id,@RequestBody TransferRequest body) { command.transfer(id,body,CurrentUser.get());return Response.ok(query.detail(id,CurrentUser.get())); }
+    @PostMapping("/{id}/transfer") public Response<ConversationDetail> transfer(@PathVariable Long id,@RequestBody TransferRequest body) { var user=CurrentUser.get();command.transfer(id,body,user);return Response.ok(query.transferResult(id,user)); }
     @PostMapping("/{id}/close") public Response<ConversationDetail> close(@PathVariable Long id,@RequestBody CloseRequest body) { command.close(id,body,CurrentUser.get());return Response.ok(query.detail(id,CurrentUser.get())); }
 }

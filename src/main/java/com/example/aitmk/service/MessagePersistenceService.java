@@ -10,7 +10,10 @@ public interface MessagePersistenceService {
     boolean existsExternalMessage(String externalMessageId);
     IncomingResult recordIncoming(String customerPhone, String businessAccountId, String externalMessageId,
                         String messageType, String content, String mediaId, String mediaUrl,
-                        String mimeType, String rawPayload, Instant receivedAt);
+                        String mimeType, String rawPayload, Instant receivedAt,
+                        String referralSourceType, String referralSourceId, String referralSourceUrl,
+                        String referralHeadline, String referralBody, String referralImageUrl,
+                        String referralThumbnailUrl, String referralWelcomeText);
     void updateDeliveryStatus(String externalMessageId, SentStatus status, Instant occurredAt, String failureReason);
     long createOutgoing(String customerPhone, String businessAccountId, SenderType senderType, String senderId,
                         String operatorRole, MessageType messageType, String content, String mediaId, String mediaUrl, String mimeType);

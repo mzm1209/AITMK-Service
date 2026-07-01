@@ -12,6 +12,7 @@ import com.example.aitmk.security.auth.AuthenticatedUser;
 import com.example.aitmk.security.auth.Permission;
 import com.example.aitmk.service.AgentDispatchService;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.service.impl.ClueIntegrationService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +32,7 @@ public class ConversationCommandService {
     private final AssignmentRecordRepository assignments;
     private final AgentDispatchService agents;
     private final CrmOpenApiService crm;
+    private final ClueIntegrationService clueIntegrationService;
     private final V2AccessService access;
     private final RealtimeEventService events;
     private final RealtimePayloadFactory payloads;
@@ -46,9 +48,6 @@ public class ConversationCommandService {
         if (req.targetAgentId() == null || req.targetAgentId().isBlank()
                 || req.targetAgentId().equals(conversation.getAssignedAgentId()))
             throw new V2Exception(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_AGENT_INVALID", "目标坐席无效");
-        access.requireAssignedAgent(user, req.targetAgentId());
-        if (!agents.onlineAgentsSnapshot().contains(req.targetAgentId()))
-            throw new V2Exception(HttpStatus.UNPROCESSABLE_ENTITY, "TARGET_AGENT_UNAVAILABLE", "目标坐席不存在、未启用或不在线");
 
         ResourceEntity resource = resources.findByIdForUpdate(conversation.getResourceId()).orElseThrow();
         String oldAgent = conversation.getAssignedAgentId();
@@ -57,8 +56,9 @@ public class ConversationCommandService {
                     assignment.setStatus(AssignmentStatus.TRANSFERRED);
                     assignment.setReplyable(false);
                     assignment.setClosedAt(Instant.now());
-                    assignment.setCloseReason(req.reason());
+                    assignment.setCloseReason(req.reason() != null ? req.reason() : "");
                 });
+        assignments.flush();
         AssignmentRecordEntity assignment = new AssignmentRecordEntity();
         assignment.setResourceId(resource.getId());
         assignment.setConversationId(conversation.getId());
@@ -75,11 +75,10 @@ public class ConversationCommandService {
         resources.saveAndFlush(resource);
         conversations.saveAndFlush(conversation);
 
-        // Issue 9: 同步 CRM 转接（关闭旧分配 + 创建新分配）
-        try { crm.addAssignmentRecord(resource.getCustomerPhone(), req.targetAgentId(), "服务中"); } catch (Exception ex) { log.warn("CRM add assignment for transfer failed", ex); }
+        syncCrmTransfer(resource, req.targetAgentId());
 
         var assignmentPayload = new V2Api.AssignmentChangedPayload(
-                oldAgent, req.targetAgentId(), req.reason());
+                oldAgent, req.targetAgentId(), req.reason() != null ? req.reason() : "");
         appendAssignment(conversation, resource, req.targetAgentId(), assignmentPayload);
         appendConversationUpdated(conversation, req.targetAgentId());
         if (oldAgent != null) {
@@ -129,6 +128,36 @@ public class ConversationCommandService {
     private void appendConversationUpdated(ConversationEntity conversation, String target) {
         events.append("CONVERSATION_UPDATED", "CONVERSATION", conversation.getId(), conversation.getResourceId(),
                 conversation.getId(), target, conversation.getVersion(), payloads.conversation(conversation, target));
+    }
+
+    private void syncCrmTransfer(ResourceEntity resource, String targetAgentId) {
+        try {
+            if (!crm.closeServingAssignment(resource.getCustomerPhone())) {
+                log.warn("CRM close assignment for transfer returned false. customer={}", resource.getCustomerPhone());
+            }
+        } catch (Exception ex) {
+            log.warn("CRM close assignment for transfer failed. customer={}", resource.getCustomerPhone(), ex);
+        }
+        try {
+            if (!crm.addAssignmentRecord(resource.getCustomerPhone(), targetAgentId, "服务中")) {
+                log.warn("CRM add assignment for transfer returned false. customer={}, agent={}",
+                        resource.getCustomerPhone(), targetAgentId);
+            }
+        } catch (Exception ex) {
+            log.warn("CRM add assignment for transfer failed. customer={}, agent={}",
+                    resource.getCustomerPhone(), targetAgentId, ex);
+        }
+        try {
+            var lead = clueIntegrationService.lookupLeadByPhone(resource.getCustomerPhone())
+                    .or(() -> clueIntegrationService.createLeadForNewCustomer(
+                            resource.getCustomerPhone(), resource.getCustomerName(), targetAgentId));
+            lead.map(com.example.aitmk.model.domain.LeadRecord::getRowId)
+                    .filter(rowId -> rowId != null && !rowId.isBlank())
+                    .ifPresent(rowId -> clueIntegrationService.updateLeadOnAssignment(rowId, targetAgentId));
+        } catch (Exception ex) {
+            log.warn("CRM lead update for transfer failed. customer={}, agent={}",
+                    resource.getCustomerPhone(), targetAgentId, ex);
+        }
     }
 
     private ConversationEntity lock(Long id) {

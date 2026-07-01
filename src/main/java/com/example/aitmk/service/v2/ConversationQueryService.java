@@ -4,6 +4,7 @@ import com.example.aitmk.model.api.v2.V2Api.*;
 import com.example.aitmk.model.api.v2.V2Exception;
 import com.example.aitmk.model.entity.*;
 import com.example.aitmk.repository.*;
+import com.example.aitmk.service.AgentAccountCacheService;
 import com.example.aitmk.security.auth.*;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class ConversationQueryService {
     private final ChatMessageRepository messages;
     private final ConversationAgentStateRepository states;
     private final V2AccessService access;
+    private final AgentAccountCacheService agentAccounts;
     private final EntityManager em;
 
     @Transactional(readOnly = true)
@@ -70,17 +72,36 @@ public class ConversationQueryService {
         var query = em.createNativeQuery(sql.toString()); params.forEach(query::setParameter); query.setMaxResults(size + 1);
         @SuppressWarnings("unchecked") List<Number> ids = query.getResultList();
         boolean more = ids.size() > size; if (more) ids = ids.subList(0, size);
-        List<ConversationSummary> items = ids.stream().map(n -> summary(conversations.findById(n.longValue()).orElseThrow(), user)).filter(Objects::nonNull).toList();
-        String next = items.isEmpty() ? null : encode(conversations.findById(Long.valueOf(items.get(items.size()-1).conversationId())).orElseThrow());
-        return new CursorPage<>(items, next, more);
+        List<ConversationEntity> entities = ids.stream()
+                .map(n -> conversations.findById(n.longValue()).orElseThrow())
+                .filter(c -> access.canView(user, c))
+                .toList();
+        Map<String,String> agentNames = agentAccounts.getNames(
+                entities.stream().map(ConversationEntity::getAssignedAgentId).filter(Objects::nonNull).collect(java.util.stream.Collectors.toSet()));
+        List<ConversationSummary> summaries = entities.stream()
+                .map(c -> summary(c, user, agentNames.get(c.getAssignedAgentId()), unreadAgentId(c, user, dataScope), true))
+                .filter(Objects::nonNull).toList();
+        String next = summaries.isEmpty() ? null : encode(conversations.findById(Long.valueOf(summaries.get(summaries.size()-1).conversationId())).orElseThrow());
+        return new CursorPage<>(summaries, next, more);
     }
 
     @Transactional(readOnly = true)
     public ConversationDetail detail(Long id, AuthenticatedUser user) {
         ConversationEntity c = get(id, user);
+        return detail(c, user, true);
+    }
+
+    @Transactional(readOnly = true)
+    public ConversationDetail transferResult(Long id, AuthenticatedUser user) {
+        ConversationEntity c = conversations.findById(id).orElseThrow(() -> new V2Exception(HttpStatus.NOT_FOUND,"CONVERSATION_NOT_FOUND","会话不存在"));
+        return detail(c, user, false);
+    }
+
+    private ConversationDetail detail(ConversationEntity c, AuthenticatedUser user, boolean requireView) {
         ResourceEntity resource=resources.findById(c.getResourceId()).orElseThrow();
         ChatMessageEntity lastMessage=messages.findFirstByResourceIdOrderByCreatedAtDescIdDesc(resource.getId()).orElse(null);
-        return ConversationDetail.of(summary(c, user), V2Mapper.resource(resource,lastMessage));
+        String agentName = agentAccounts.getName(c.getAssignedAgentId());
+        return ConversationDetail.of(summary(c, user, agentName, requireView), V2Mapper.resource(resource,lastMessage,agentName));
     }
 
     @Transactional(readOnly = true)
@@ -98,15 +119,29 @@ public class ConversationQueryService {
         access.requireView(user, c); return c;
     }
 
-    private ConversationSummary summary(ConversationEntity c, AuthenticatedUser user) {
-        if (!access.canView(user, c)) return null;
+    private ConversationSummary summary(ConversationEntity c, AuthenticatedUser user, String agentName) {
+        return summary(c, user, agentName, user.getAccountRowId(), true);
+    }
+
+    private ConversationSummary summary(ConversationEntity c, AuthenticatedUser user, String agentName, boolean requireView) {
+        return summary(c, user, agentName, user.getAccountRowId(), requireView);
+    }
+
+    private ConversationSummary summary(ConversationEntity c, AuthenticatedUser user, String agentName, String unreadAgentId, boolean requireView) {
+        if (requireView && !access.canView(user, c)) return null;
         ResourceEntity r = resources.findById(c.getResourceId()).orElseThrow();
-        ConversationAgentStateEntity state = states.findByConversationIdAndAgentId(c.getId(), user.getAccountRowId()).orElse(null);
+        ConversationAgentStateEntity state = unreadAgentId == null ? null
+                : states.findByConversationIdAndAgentId(c.getId(), unreadAgentId).orElse(null);
         List<ChatMessageEntity> latest = messages.findByConversationIdOrderByCreatedAtDescIdDesc(c.getId(), PageRequest.of(0,1));
         Instant deadline = r.getLastCustomerMessageAt() == null ? null : r.getLastCustomerMessageAt().plusSeconds(86400);
         boolean replyable = c.getStatus() != PersistenceEnums.ConversationStatus.CLOSED && user.hasPermission(Permission.CHAT_REPLY_ASSIGNED)
                 && access.canReply(user, c.getAssignedAgentId()) && deadline != null && !deadline.isBefore(Instant.now());
-        return V2Mapper.conversation(c, r, state, latest.isEmpty() ? null : latest.get(0), replyable);
+        return V2Mapper.conversation(c, r, state, latest.isEmpty() ? null : latest.get(0), replyable, agentName);
+    }
+
+    private String unreadAgentId(ConversationEntity c, AuthenticatedUser user, V2AccessService.DataScope scope) {
+        if (scope == V2AccessService.DataScope.MINE) return user.getAccountRowId();
+        return c.getAssignedAgentId() == null ? user.getAccountRowId() : c.getAssignedAgentId();
     }
 
     private void add(StringBuilder sql, Map<String,Object> params, String column, String name, String value) {

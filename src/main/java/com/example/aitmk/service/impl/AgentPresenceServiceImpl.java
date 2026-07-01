@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -55,6 +57,9 @@ public class AgentPresenceServiceImpl implements AgentPresenceService {
     private final com.example.aitmk.repository.AssignmentRecordRepository assignmentRepo;
     private final com.example.aitmk.repository.ResourceRepository resourceRepo;
 
+
+    /** Agents restored to OFFLINE during startup; events pushed on ApplicationReadyEvent. */
+    private final Set<String> restoredOfflineAgents = Collections.synchronizedSet(new LinkedHashSet<>());
     // ==================== 公有方法 ====================
 
     /**
@@ -73,8 +78,9 @@ public class AgentPresenceServiceImpl implements AgentPresenceService {
         for (var ar : serving) {
             String agentId = ar.getAgentId();
             if (agentId != null && !statuses.containsKey(agentId)) {
-                statuses.put(agentId, AgentPresence.ONLINE);
-                assignableAgents.add(agentId);
+                statuses.put(agentId, AgentPresence.OFFLINE);
+                // Agent set to OFFLINE; must manually go online after restart
+                restoredOfflineAgents.add(agentId);
                 log.info("Restored agent presence from SERVING assignment. agent={}", agentId);
             }
         }
@@ -91,9 +97,31 @@ public class AgentPresenceServiceImpl implements AgentPresenceService {
                         log.warn("Repaired inconsistent resource: id={}, phone={}, agent={}", 
                                 r.getId(), r.getCustomerPhone(), ar.getAgentId());
                     }
+
+
+
                 });
             }
         }
+    }
+
+
+    /**
+     * Push AGENT_STATUS_CHANGED (→ OFFLINE) events for agents whose presence was
+     * restored during startup.  Runs after the application and the STOMP broker
+     * are fully ready, so connected frontends receive the event in realtime.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void publishRestoredOfflineEvents() {
+        for (String agentId : List.copyOf(restoredOfflineAgents)) {
+            try {
+                publishStatusChanged(agentId, AgentPresence.ONLINE, AgentPresence.OFFLINE);
+                log.info("Published OFFLINE status change for restored agent. agent={}", agentId);
+            } catch (Exception ex) {
+                log.warn("Failed to publish OFFLINE event for restored agent. agent={}", agentId, ex);
+            }
+        }
+        restoredOfflineAgents.clear();
     }
 
     @Override

@@ -21,6 +21,11 @@ public class WhatsAppMessage {
     private Boolean forwarded;
     private Boolean frequentlyForwarded;
 
+    private String referralSourceUrl;
+    private String referralImageUrl;
+    private String referralThumbnailUrl;
+    private String referralWelcomeText;
+
     /** Click to WhatsApp 广告来源字段。 */
     private String referralSourceType;
     private String referralSourceId;

@@ -47,8 +47,7 @@ public class V2AccessService {
         if (user != null && user.getRole() == AgentRole.MANAGER && user.hasPermission(Permission.CHAT_VIEW_MANAGED)
                 && user.getManagedAgentIds() != null && user.getManagedAgentIds().contains(id)) return;
         if (user != null && user.getRole() == AgentRole.MANAGER && user.hasPermission(Permission.CHAT_VIEW_MANAGED) && id.equals(user.getAccountRowId())) return;
-        if (user != null && user.getRole() == AgentRole.TMK && user.hasPermission(Permission.CHAT_VIEW_OWN)
-                && id.equals(user.getAccountRowId())) return;
+        if (user != null && user.getRole() == AgentRole.TMK && user.hasPermission(Permission.CHAT_VIEW_OWN)) return;
         throw forbidden("无权查询指定坐席的数据");
     }
 

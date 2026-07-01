@@ -100,10 +100,6 @@ public class AgentAccountController {
     public ResponseEntity<?> listAccounts(@RequestParam(value = "keyword", required = false) String keyword,
                                           @RequestParam(value = "pageSize", defaultValue = "50") int pageSize,
                                           @RequestParam(value = "pageIndex", defaultValue = "1") int pageIndex) {
-        ResponseEntity<?> forbidden = requireOwner();
-        if (forbidden != null) {
-            return forbidden;
-        }
         List<Map<String, Object>> filters = new ArrayList<>();
         if (StringUtils.hasText(keyword)) {
             filters.add(filter(LOGIN_ACCOUNT_CONTROL_ID, keyword.trim(), 2, 1, 7)); // contains
@@ -123,7 +119,7 @@ public class AgentAccountController {
 
     @GetMapping("/{rowId}")
     public ResponseEntity<?> getAccount(@PathVariable String rowId) {
-        ResponseEntity<?> forbidden = requireOwner(); if (forbidden != null) return forbidden;
+        
         AgentAccountView account = loadAccounts().stream().filter(a -> a.rowId().equals(rowId)).findFirst()
                 .orElseThrow(() -> new AccountValidationException("ACCOUNT_NOT_FOUND", "账号不存在"));
         return ResponseEntity.ok(Map.of("success", true, "data", account));

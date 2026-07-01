@@ -210,11 +210,17 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
 
         for (String agent : onlineAgents) {
             AgentProfile profile = profileOf(agent);
+            if (profile == null) {
+                continue;
+            }
             onlineByLevel.merge(profile.level(), 1, Integer::sum);
             levelCapacity.merge(profile.level(), profile.maxLoad(), Integer::sum);
         }
         customerAgentMap.forEach((customer, agent) -> {
             AgentProfile profile = profileOf(agent);
+            if (profile == null) {
+                return;
+            }
             assignedByLevel.merge(profile.level(), 1, Integer::sum);
         });
 
@@ -246,6 +252,9 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         ArrayList<String> candidates = new ArrayList<>();
         for (String agent : onlineAgents) {
             AgentProfile profile = profileOf(agent);
+            if (profile == null) {
+                continue;
+            }
             if (!level.equals(profile.level())) {
                 continue;
             }
@@ -266,6 +275,9 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
         int count = 0;
         for (String agent : onlineAgents) {
             AgentProfile p = profileOf(agent);
+            if (p == null) {
+                continue;
+            }
             if (level.equals(p.level())) {
                 total += p.weight();
                 count++;
@@ -275,7 +287,7 @@ public class InMemoryAgentDispatchService implements AgentDispatchService {
     }
 
     private AgentProfile profileOf(String agent) {
-        return agentProfiles.getOrDefault(normalizeAgentId(agent), new AgentProfile("中级", 1.0d, 8));
+        return agentProfiles.get(normalizeAgentId(agent));
     }
 
     private double defaultLevelFactor(String level) {
