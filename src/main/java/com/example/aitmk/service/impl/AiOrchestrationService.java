@@ -58,13 +58,13 @@ public class AiOrchestrationService {
     @Value("${ai.prompt.after-hours-collect:}")
     private String afterHoursCollectPrompt;
 
-    // Default welcome/after-hours texts kept in Java source to avoid .properties encoding issues.
+    @Value("${ai.after-hours.auto-reply-enabled:false}")
+    private boolean afterHoursAutoReplyEnabled;
+
+    // Default welcome text kept in Java source to avoid .properties encoding issues.
     // Java source is always UTF-8, guaranteed by the compiler.
     private static final String DEFAULT_WELCOME =
             "你好，欢迎来到咨询中心。请选择您想了解的学习中心：\n1. 中心A\n2. 中心B\n3. 中心C";
-
-    private static final String DEFAULT_AFTER_HOURS =
-            "感谢您的咨询。当前为非工作时间，请留下您的信息，我们将在上班后第一时间联系您：\n1. 您想咨询哪个学习中心？\n2. 您想了解什么科目？\n3. 孩子年龄是？\n4. 您希望什么时间联系您？";
 
     private volatile Map<String, String> learningCenterMapping = new HashMap<>();
 
@@ -275,7 +275,7 @@ public class AiOrchestrationService {
     ) {
         String collectPrompt = StringUtils.hasText(afterHoursCollectPrompt)
                 ? afterHoursCollectPrompt
-                : DEFAULT_AFTER_HOURS;
+                : "Collect customer information needed for follow-up during working hours.";
 
         String aiContext = collectPrompt + "\n\nCustomer message: " + customerContent + "\nPlease analyze if the customer provided sufficient info (such as study center, subject, age, contact time)." + "\nIf info is complete, reply: INFO_COMPLETE. Otherwise, ask for specific details.";
         String aiAnswer = null;
@@ -291,24 +291,29 @@ public class AiOrchestrationService {
             conversationRepository.save(conversation);
             log.info("After-hours info collection complete. customer={}", customerPhone);
 
-            sendAiReply(businessAccountId, customerPhone, "感谢您提供的信息！我们将在工作时间尽快与您联系。", conversation, null);
+            if (afterHoursAutoReplyEnabled) {
+                sendAiReply(businessAccountId, customerPhone, "感谢您提供的信息！我们将在工作时间尽快与您联系。", conversation, null);
+            }
         } else {
             conversation.setAiState(AiState.COLLECTING_INFO);
             conversationRepository.save(conversation);
 
-            sendAiReply(businessAccountId, customerPhone, aiAnswer, conversation, null);
+            if (afterHoursAutoReplyEnabled) {
+                sendAiReply(businessAccountId, customerPhone, aiAnswer, conversation, null);
+            }
         }
     }
 
     /**
-     * Send after-hours collect info prompt as a direct text message.
-     * Uses configured afterHoursCollectPrompt or a hardcoded fallback.
-     * Does not depend on AI availability.
+     * Send after-hours collect info prompt when explicitly enabled.
+     * Uses the configured afterHoursCollectPrompt only; there is no hardcoded customer-facing fallback.
      */
     private void sendAfterHoursCollectPrompt(String baId, String customerPhone, ConversationEntity conversation) {
-        String prompt = StringUtils.hasText(afterHoursCollectPrompt)
-                ? afterHoursCollectPrompt
-                : "感谢您的咨询。当前为非工作时间，请留下您的信息，我们将在上班后第一时间联系您。";
+        if (!afterHoursAutoReplyEnabled) {
+            log.debug("After-hours auto reply disabled, skipping collect prompt. customer={}", customerPhone);
+            return;
+        }
+        String prompt = afterHoursCollectPrompt;
         sendAiReply(baId, customerPhone, prompt, conversation, null);
     }
 

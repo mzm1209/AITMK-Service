@@ -62,6 +62,34 @@ public final class V2Api {
     public record DashboardSummary(long activeConversations, long pendingAssignments, long unreadConversations,
             long expiringReplyWindows, long todayReceived, long todayClosed,
             double firstHumanResponseP50Seconds, double firstHumanResponseP90Seconds) {}
+    public record DashboardAnalytics(
+            String scope, String granularity, String from, String to,
+            DashboardAnalyticsCards cards,
+            List<LeadTrendPoint> leadTrend,
+            List<ResponseTrendPoint> responseTrend,
+            List<DashboardAgentStats> agentStats) {}
+    public record DashboardAnalyticsCards(
+            long leadCount,
+            Long firstResponseAvgSeconds,
+            Long firstResponseP50Seconds,
+            Long firstResponseP90Seconds,
+            Long averageResponseSeconds,
+            Long averageResponseP90Seconds,
+            long activeConversations,
+            long resolvedConversations,
+            double averageResolvedConversations) {}
+    public record LeadTrendPoint(String bucket, long leadCount) {}
+    public record ResponseTrendPoint(String bucket, Long firstResponseAvgSeconds, Long averageResponseSeconds) {}
+    public record DashboardAgentStats(
+            String agentId,
+            String agentName,
+            long leadCount,
+            Long firstResponseAvgSeconds,
+            Long firstResponseP90Seconds,
+            Long averageResponseSeconds,
+            Long averageResponseP90Seconds,
+            long activeConversations,
+            long resolvedConversations) {}
     public record ReadRequest(String lastReadMessageId) {}
     public record ReadResult(String conversationId, String agentId, String lastReadMessageId, Instant lastReadAt, long unreadCount) {}
     public record TransferRequest(String targetAgentId, String reason, long expectedVersion) {}
@@ -80,6 +108,17 @@ public final class V2Api {
         Double averageResponseTime,
         long totalServed
     ) {}
+
+    // ── Agent Quick Replies ──
+    public record QuickReplyRequest(String title, String content, String category, Integer sortOrder) {}
+    public record QuickReplyView(
+            String id,
+            String title,
+            String content,
+            String category,
+            int sortOrder,
+            Instant updatedAt) {}
+    public record QuickReplyListView(List<QuickReplyView> items) {}
 
     // ── CRM Profile / Link Lead ──
     public record CrmProfileView(
