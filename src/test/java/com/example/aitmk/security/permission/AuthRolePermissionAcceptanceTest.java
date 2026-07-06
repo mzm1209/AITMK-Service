@@ -118,7 +118,11 @@ class AuthRolePermissionAcceptanceTest {
     void unknownCrmRoleFallsBackToTmk() {
         assertThat(AgentRole.from("unknown-role")).isEqualTo(AgentRole.TMK);
         assertThat(Permission.defaultsFor(AgentRole.from("unknown-role")))
-                .containsExactlyInAnyOrder(Permission.CHAT_VIEW_OWN, Permission.CHAT_VIEW_ASSIGNED, Permission.CHAT_REPLY_ASSIGNED);
+                .containsExactlyInAnyOrder(
+                        Permission.CHAT_VIEW_OWN,
+                        Permission.CHAT_VIEW_ASSIGNED,
+                        Permission.CHAT_REPLY_ASSIGNED,
+                        Permission.RESOURCE_ASSIGN);
     }
 
     private AuthenticatedUser user(String accountRowId, AgentRole role, List<String> managedAgentIds) {

@@ -36,7 +36,9 @@ public class DashboardService {
         V2AccessService.DataScope scope = access.requireScope(user, rawScope);
         List<String> agents = access.agentsForScope(user, scope);
         if (agents != null && agents.isEmpty()) return new DashboardSummary(0, 0, 0, 0, 0, 0, 0, 0);
-        Instant day = LocalDate.now(SERVER_ZONE).atStartOfDay(SERVER_ZONE).toInstant();
+        LocalDate today = LocalDate.now(SERVER_ZONE);
+        Instant day = today.atStartOfDay(SERVER_ZONE).toInstant();
+        Instant dayEnd = today.plusDays(1).atStartOfDay(SERVER_ZONE).toInstant();
         Instant now = Instant.now();
         long active = count("conversation", "status<>'CLOSED'", "assigned_agent_id", agents, null);
         long pending = count("business_resource", "resource_status='PENDING_ASSIGNMENT'", "assigned_agent_id", agents, null);
@@ -45,7 +47,7 @@ public class DashboardService {
                 new Instant[]{now.minus(Duration.ofHours(24)), now.minus(Duration.ofHours(23))});
         long received = count("conversation", "created_at>=:from", "assigned_agent_id", agents, new Instant[]{day, null});
         long closed = count("conversation", "closed_at>=:from", "assigned_agent_id", agents, new Instant[]{day, null});
-        List<Long> responseTimes = firstResponseSeconds(agents, day, now);
+        List<Long> responseTimes = firstResponseSeconds(agents, day, dayEnd);
         return new DashboardSummary(active, pending, unread, expiring, received, closed,
                 percentile(responseTimes, .5, false) == null ? 0 : percentile(responseTimes, .5, false),
                 percentile(responseTimes, .9, false) == null ? 0 : percentile(responseTimes, .9, false));

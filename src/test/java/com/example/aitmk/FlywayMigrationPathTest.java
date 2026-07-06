@@ -7,18 +7,20 @@ import java.sql.DriverManager;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class FlywayMigrationPathTest {
+    private static final String H2_MIGRATIONS = "classpath:db/migration-h2";
+
     @Test void emptyDatabaseMigratesThroughV1AndV2() throws Exception {
         String url="jdbc:h2:mem:flyway_empty;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
-        Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations("classpath:db/migration").load();
+        Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations(H2_MIGRATIONS).load();
         assertThat(flyway.migrate().migrationsExecuted).isEqualTo(11);
         assertV2(url);
     }
 
     @Test void legacyV1SchemaWithoutHistoryCanBeBaselinedThenUpgraded() throws Exception {
         String url="jdbc:h2:mem:flyway_legacy;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
-        Flyway.configure().dataSource(url,"sa","").locations("classpath:db/migration").target("1").load().migrate();
+        Flyway.configure().dataSource(url,"sa","").locations(H2_MIGRATIONS).target("1").load().migrate();
         try(var c=DriverManager.getConnection(url,"sa","");var s=c.createStatement()){s.execute("drop table flyway_schema_history");}
-        Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations("classpath:db/migration")
+        Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations(H2_MIGRATIONS)
                 .baselineOnMigrate(true).baselineVersion(MigrationVersion.fromVersion("1")).load();
         assertThat(flyway.migrate().migrationsExecuted).isEqualTo(10);
         assertV2(url);
