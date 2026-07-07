@@ -17,9 +17,11 @@ public class ConversationV2Controller {
             @RequestParam(required=false) String keyword, @RequestParam(required=false) String sourceChannel,
             @RequestParam(required=false) String resourceType, @RequestParam(required=false) String resourceStatus,
             @RequestParam(required=false) String queue, @RequestParam(required=false) String assignedAgentId,
-            @RequestParam(required=false) String cursor, @RequestParam(defaultValue="30") int size) {
+            @RequestParam(required=false) String replyWindow, @RequestParam(required=false) String leadType,
+            @RequestParam(required=false) String leadStatus, @RequestParam(required=false) String cursor,
+            @RequestParam(defaultValue="30") int size) {
         return Response.ok(query.list(CurrentUser.get(), scope, status, keyword, sourceChannel, resourceType,
-                resourceStatus, queue, assignedAgentId, cursor, size));
+                resourceStatus, queue, assignedAgentId, replyWindow, leadType, leadStatus, cursor, size));
     }
     @GetMapping("/{id}") public Response<ConversationDetail> detail(@PathVariable Long id) { return Response.ok(query.detail(id, CurrentUser.get())); }
     @GetMapping("/{id}/messages") public Response<CursorPage<MessageView>> messages(@PathVariable Long id,

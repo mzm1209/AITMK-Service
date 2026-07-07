@@ -14,6 +14,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.Objects;
 
@@ -31,10 +32,29 @@ public class ConversationQueryService {
     public CursorPage<ConversationSummary> list(AuthenticatedUser user, String scope, String status,
             String keyword, String source, String resourceType, String resourceStatus, String queue,
             String assigned, String cursor, int requested) {
+        return list(user, scope, status, keyword, source, resourceType, resourceStatus, queue,
+                assigned, null, cursor, requested);
+    }
+
+    @Transactional(readOnly = true)
+    public CursorPage<ConversationSummary> list(AuthenticatedUser user, String scope, String status,
+            String keyword, String source, String resourceType, String resourceStatus, String queue,
+            String assigned, String replyWindow, String cursor, int requested) {
+        return list(user, scope, status, keyword, source, resourceType, resourceStatus, queue,
+                assigned, replyWindow, null, null, cursor, requested);
+    }
+
+    @Transactional(readOnly = true)
+    public CursorPage<ConversationSummary> list(AuthenticatedUser user, String scope, String status,
+            String keyword, String source, String resourceType, String resourceStatus, String queue,
+            String assigned, String replyWindow, String leadType, String leadStatus, String cursor, int requested) {
         int size = Math.min(Math.max(requested, 1), 100);
         V2AccessService.DataScope dataScope = access.requireScope(user, scope);
         access.requireAgentWithinScope(user, dataScope, assigned);
-        StringBuilder sql = new StringBuilder("select c.id from conversation c join business_resource r on r.id=c.resource_id where 1=1 ");
+        boolean hasLeadFilter = hasText(leadType) || hasText(leadStatus);
+        StringBuilder sql = new StringBuilder("select c.id from conversation c join business_resource r on r.id=c.resource_id ");
+        if (hasLeadFilter) sql.append("join lead_records lr on lr.customer_phone = r.customer_phone ");
+        sql.append("where 1=1 ");
         Map<String,Object> params = new HashMap<>();
         boolean pendingStatusCompatibility = "PENDING_ASSIGNMENT".equalsIgnoreCase(status);
         add(sql, params, "c.status", "status", pendingStatusCompatibility ? null : status);
@@ -42,6 +62,9 @@ public class ConversationQueryService {
         add(sql, params, "r.resource_type", "resourceType", resourceType);
         String resolvedResourceStatus = pendingStatusCompatibility || "pending".equalsIgnoreCase(queue) ? "PENDING_ASSIGNMENT" : resourceStatus;
         add(sql, params, "r.resource_status", "resourceStatus", resolvedResourceStatus);
+        addReplyWindow(sql, params, replyWindow);
+        add(sql, params, "lr.leads_type", "leadType", leadType);
+        add(sql, params, "lr.leads_status", "leadStatus", leadStatus);
         if (keyword != null && !keyword.isBlank()) { sql.append("and (r.customer_phone like :keyword or r.customer_name like :keyword) "); params.put("keyword", "%" + keyword + "%"); }
         List<String> scopedAgents = access.agentsForScope(user, dataScope);
         if (assigned != null && !assigned.isBlank()) {
@@ -146,6 +169,34 @@ public class ConversationQueryService {
 
     private void add(StringBuilder sql, Map<String,Object> params, String column, String name, String value) {
         if (value != null && !value.isBlank()) { sql.append("and ").append(column).append("=:").append(name).append(' '); params.put(name, value); }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
+    private void addReplyWindow(StringBuilder sql, Map<String,Object> params, String replyWindow) {
+        if (replyWindow == null || replyWindow.isBlank()) return;
+        Instant now = Instant.now();
+        Instant expiredCutoff = now.minus(24, ChronoUnit.HOURS);
+        params.put("replyExpiredCutoff", expiredCutoff);
+        switch (replyWindow.trim().toLowerCase(Locale.ROOT)) {
+            case "open" -> sql.append("and r.last_customer_message_at is not null and r.last_customer_message_at >= :replyExpiredCutoff ");
+            case "expired" -> sql.append("and r.last_customer_message_at is not null and r.last_customer_message_at < :replyExpiredCutoff ");
+            case "lt15m" -> {
+                params.put("replyLtCutoff", now.minus(23, ChronoUnit.HOURS).minus(45, ChronoUnit.MINUTES));
+                sql.append("and r.last_customer_message_at is not null and r.last_customer_message_at >= :replyExpiredCutoff and r.last_customer_message_at <= :replyLtCutoff ");
+            }
+            case "lt1h" -> {
+                params.put("replyLtCutoff", now.minus(23, ChronoUnit.HOURS));
+                sql.append("and r.last_customer_message_at is not null and r.last_customer_message_at >= :replyExpiredCutoff and r.last_customer_message_at <= :replyLtCutoff ");
+            }
+            case "lt4h" -> {
+                params.put("replyLtCutoff", now.minus(20, ChronoUnit.HOURS));
+                sql.append("and r.last_customer_message_at is not null and r.last_customer_message_at >= :replyExpiredCutoff and r.last_customer_message_at <= :replyLtCutoff ");
+            }
+            default -> throw new V2Exception(HttpStatus.BAD_REQUEST, "REPLY_WINDOW_INVALID", "replyWindow 参数无效");
+        }
     }
     private static String encode(ConversationEntity c) { return CursorCodec.encode(c.getLastMessageAt() == null ? c.getCreatedAt() : c.getLastMessageAt(), c.getId()); }
     private static String encode(Instant at, Long id) { return CursorCodec.encode(at, id); }

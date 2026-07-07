@@ -62,6 +62,7 @@ public class ClueIntegrationService {
     private static final String CLUE_PAY                  = "68383410811c335bfbcdf7c9";
     private static final String CLUE_PAYMENT_DATE         = "683832d8811c335bfbcdf7bf";
     private static final String CLUE_PAYMENT_AMOUNT       = "6836a787811c335bfbcdf35a";
+    private static final String DEFAULT_LEADS_TYPE        = "Type D";
 
     // ── imzhgl control IDs ──
     private static final String LOGIN_RELATED_USER = "69abacc3433ec9f4b5e6ce26";
@@ -246,7 +247,7 @@ public class ClueIntegrationService {
         controls.add(textControl(CLUE_PHONE, phone));
         controls.add(textControl(CLUE_PARENT_NAME, parentName));
         controls.add(dateControl(CLUE_LEADS_DATE, now));
-        controls.add(selectControl(CLUE_LEADS_TYPE, "Type A"));
+        controls.add(selectControl(CLUE_LEADS_TYPE, DEFAULT_LEADS_TYPE));
         controls.add(dateControl(CLUE_ASSIGN_TIME, now));
         controls.add(userRelationControl(CLUE_TMK, resolveAccountIdFromLoginRowId(agentRowId).orElse(agentRowId)));
         controls.add(userRelationControl(CLUE_FOLLOW_STAFF, resolveAccountIdFromLoginRowId(agentRowId).orElse(agentRowId)));
@@ -274,6 +275,8 @@ public class ClueIntegrationService {
             entity.setCustomerPhone(phone);
             entity.setCrmRowId(lead.getRowId());
             entity.setLeadData(objectMapper.writeValueAsString(lead));
+            entity.setLeadsType(lead.getLeadsType());
+            entity.setLeadsStatus(lead.getLeadsStatus());
             entity.setCrmSyncedAt(Instant.now());
             leadRepo.save(entity);
         } catch (Exception ex) {
@@ -288,6 +291,8 @@ public class ClueIntegrationService {
                 String agentJson = "[{\"accountId\":\"" + agentRowId + "\"}]";
                 lead.setTmk(agentJson);
                 entity.setLeadData(objectMapper.writeValueAsString(lead));
+                entity.setLeadsType(lead.getLeadsType());
+                entity.setLeadsStatus(lead.getLeadsStatus());
                 leadRepo.save(entity);
             } catch (Exception ex) {
                 log.warn("Local lead update failed. rowId={}", rowId, ex);
@@ -306,7 +311,7 @@ public class ClueIntegrationService {
                 .phone(phone)
                 .parentName(parentName)
                 .leadsDate(now)
-                .leadsType("Type A")
+                .leadsType(DEFAULT_LEADS_TYPE)
                 .assignedTime(now)
                 .tmk(agentJson)
                 .firstCreatChannel(metaJson)

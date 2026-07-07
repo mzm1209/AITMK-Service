@@ -29,6 +29,12 @@ public class LeadRecordEntity {
     @Column(name = "lead_data", columnDefinition = "LONGTEXT")
     private String leadData;
 
+    @Column(name = "leads_type", length = 128)
+    private String leadsType;
+
+    @Column(name = "leads_status", length = 128)
+    private String leadsStatus;
+
     @Column(name = "crm_synced_at")
     private Instant crmSyncedAt;
 

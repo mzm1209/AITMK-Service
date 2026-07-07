@@ -149,6 +149,8 @@ public class ResourceV2Controller {
             entity.setCustomerPhone(phone);
             entity.setCrmRowId(rowId);
             entity.setLeadData(objectMapper.writeValueAsString(clue));
+            entity.setLeadsType(clue.getLeadsType());
+            entity.setLeadsStatus(clue.getLeadsStatus());
             entity.setCrmSyncedAt(Instant.now());
             leadRecordRepository.save(entity);
             log.info("Linked resource {} to clue rowId={}, phone={}", id, rowId, phone);
