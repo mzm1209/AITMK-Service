@@ -1,0 +1,2 @@
+-- MariaDB production migration normalizes customer_phone collations.
+-- H2 does not track MySQL collations, so no schema change is needed here.
