@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
@@ -41,6 +42,7 @@ class RealtimeEventContractIntegrationTest {
     @Autowired ConversationCommandService conversationCommands;
     @Autowired MessagePersistenceService messagePersistence;
     @Autowired ConversationService conversationService;
+    @Autowired ConversationQueryService conversationQueries;
     @Autowired UnreadService unreadService;
     @Autowired RealtimePayloadFactory payloads;
     @Autowired RealtimeEventService events;
@@ -148,6 +150,37 @@ class RealtimeEventContractIntegrationTest {
         assertThat(afterRefreshLikeRead.getUnreadCount()).isZero();
         assertThat(afterRefreshLikeRead.getLastReadMessageId()).isEqualTo(secondCustomer);
         assertThat(firstCustomer).isLessThan(secondCustomer);
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void incomingCustomerMessageReopensExpiredReplyWindowAndEmitsConversationSnapshot() throws Exception {
+        Fixture fixture = fixture("agent-window-reopen");
+        Instant expiredAt = Instant.now().minusSeconds(25 * 60 * 60L);
+        fixture.resource().setLastCustomerMessageAt(expiredAt);
+        fixture.resource().setLastMessageAt(expiredAt);
+        resources.saveAndFlush(fixture.resource());
+        fixture.conversation().setLastMessageAt(expiredAt);
+        conversations.saveAndFlush(fixture.conversation());
+
+        AuthenticatedUser user = user(fixture.agent());
+        assertThat(conversationQueries.detail(fixture.conversation().getId(), user).replyable()).isFalse();
+
+        Instant receivedAt = Instant.now();
+        messagePersistence.recordIncoming(fixture.resource().getCustomerPhone(), "business",
+                "wamid.reopen." + UUID.randomUUID(), "TEXT", "customer is back", null, null, null, "{}",
+                receivedAt, null, null, null, null, null, null, null, null);
+
+        V2Api.ConversationDetail detail = conversationQueries.detail(fixture.conversation().getId(), user);
+        assertThat(detail.replyable()).isTrue();
+        assertThat(detail.replyDeadline()).isAfter(Instant.now());
+
+        RealtimeEventEntity event = lastEvent(fixture, "CONVERSATION_UPDATED");
+        JsonNode snapshot = payload(event);
+        assertThat(snapshot.path("replyable").asBoolean()).isTrue();
+        assertThat(Instant.parse(snapshot.path("replyDeadline").asText())).isAfter(Instant.now());
+        assertThat(snapshot.path("lastMessage").path("content").asText()).isEqualTo("customer is back");
+        assertThat(snapshot.path("unreadCount").asLong()).isEqualTo(1);
     }
 
     @Test

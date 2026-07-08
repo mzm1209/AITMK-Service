@@ -5,6 +5,7 @@ import com.example.aitmk.model.api.v2.V2Exception;
 import com.example.aitmk.model.entity.*;
 import com.example.aitmk.repository.*;
 import com.example.aitmk.service.AgentAccountCacheService;
+import com.example.aitmk.service.WorksheetFieldService;
 import com.example.aitmk.security.auth.*;
 import jakarta.persistence.EntityManager;
 import lombok.RequiredArgsConstructor;
@@ -20,12 +21,18 @@ import java.util.Objects;
 
 @Slf4j @Service @RequiredArgsConstructor
 public class ConversationQueryService {
+    private static final String CLUE_WORKSHEET_ID = "leads_bank";
+    private static final String LEAD_TYPE_CONTROL_ID = "681c86c01e19a610d7200418";
+    private static final String LEAD_STATUS_CONTROL_ID = "66b5e34a7e23d13674f24129";
+
     private final ConversationRepository conversations;
     private final ResourceRepository resources;
     private final ChatMessageRepository messages;
     private final ConversationAgentStateRepository states;
     private final V2AccessService access;
     private final AgentAccountCacheService agentAccounts;
+    private final LeadRecordRepository leadRecords;
+    private final WorksheetFieldService worksheetFields;
     private final EntityManager em;
 
     @Transactional(readOnly = true)
@@ -109,6 +116,13 @@ public class ConversationQueryService {
     }
 
     @Transactional(readOnly = true)
+    public ConversationFilterOptions filterOptions() {
+        return new ConversationFilterOptions(
+                filterOptions(worksheetFilterOptions(LEAD_TYPE_CONTROL_ID), leadRecords.findDistinctLeadsTypes()),
+                filterOptions(worksheetFilterOptions(LEAD_STATUS_CONTROL_ID), leadRecords.findDistinctLeadsStatuses()));
+    }
+
+    @Transactional(readOnly = true)
     public ConversationDetail detail(Long id, AuthenticatedUser user) {
         ConversationEntity c = get(id, user);
         return detail(c, user, true);
@@ -173,6 +187,46 @@ public class ConversationQueryService {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private List<ConversationFilterOption> worksheetFilterOptions(String controlId) {
+        try {
+            WorksheetFieldsView fields = worksheetFields.getFields(CLUE_WORKSHEET_ID);
+            if (fields == null || fields.fields() == null) return List.of();
+            return fields.fields().stream()
+                    .filter(field -> controlId.equals(field.controlId()))
+                    .findFirst()
+                    .map(field -> field.options() == null ? List.<ConversationFilterOption>of()
+                            : field.options().stream()
+                                    .map(this::option)
+                                    .filter(Objects::nonNull)
+                                    .toList())
+                    .orElse(List.of());
+        } catch (Exception ex) {
+            log.warn("Failed to load CRM conversation filter options from worksheet fields, using local cache only.", ex);
+            return List.of();
+        }
+    }
+
+    private ConversationFilterOption option(FieldOption option) {
+        if (option == null) return null;
+        String value = hasText(option.value()) ? option.value().trim() : hasText(option.key()) ? option.key().trim() : null;
+        if (!hasText(value)) return null;
+        String label = hasText(option.value()) ? option.value().trim() : value;
+        return new ConversationFilterOption(value, label);
+    }
+
+    private List<ConversationFilterOption> filterOptions(List<ConversationFilterOption> worksheetOptions, List<String> localValues) {
+        Map<String, ConversationFilterOption> merged = new LinkedHashMap<>();
+        for (ConversationFilterOption option : worksheetOptions) {
+            if (option != null && hasText(option.value())) merged.put(option.value().trim(), option);
+        }
+        for (String value : localValues) {
+            if (!hasText(value)) continue;
+            String trimmed = value.trim();
+            merged.putIfAbsent(trimmed, new ConversationFilterOption(trimmed, trimmed));
+        }
+        return List.copyOf(merged.values());
     }
 
     private void addReplyWindow(StringBuilder sql, Map<String,Object> params, String replyWindow) {

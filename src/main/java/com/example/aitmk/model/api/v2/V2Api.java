@@ -24,6 +24,9 @@ public final class V2Api {
             String resourceStatus, String aiState, AgentBrief assignedAgent, boolean replyable,
             Instant replyDeadline, long unreadCount, String lastReadMessageId, MessageView lastMessage,
             Instant startedAt, Instant closedAt, String closeReason, long version) {}
+    public record ConversationFilterOption(String value, String label) {}
+    public record ConversationFilterOptions(List<ConversationFilterOption> leadTypes,
+                                            List<ConversationFilterOption> leadStatuses) {}
 
     public record ConversationDetail(
             String conversationId, String resourceId, CustomerBrief customer, String channel, String status,

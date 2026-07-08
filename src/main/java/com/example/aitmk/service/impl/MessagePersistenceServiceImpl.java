@@ -83,6 +83,11 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
         unreadService.increment(conversation);
         realtimeEventService.append("MESSAGE_CREATED", "MESSAGE", message.getId(), resource.getId(), conversation.getId(),
                 conversation.getAssignedAgentId(), conversation.getVersion(), realtimePayloadFactory.message(message));
+        if (conversation.getAssignedAgentId() != null) {
+            realtimeEventService.append("CONVERSATION_UPDATED", "CONVERSATION", conversation.getId(), resource.getId(),
+                    conversation.getId(), conversation.getAssignedAgentId(), conversation.getVersion(),
+                    realtimePayloadFactory.conversation(conversation, conversation.getAssignedAgentId()));
+        }
         return IncomingResult.CREATED;
     }
 

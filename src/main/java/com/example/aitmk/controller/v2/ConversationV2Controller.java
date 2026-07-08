@@ -23,6 +23,7 @@ public class ConversationV2Controller {
         return Response.ok(query.list(CurrentUser.get(), scope, status, keyword, sourceChannel, resourceType,
                 resourceStatus, queue, assignedAgentId, replyWindow, leadType, leadStatus, cursor, size));
     }
+    @GetMapping("/filter-options") public Response<ConversationFilterOptions> filterOptions() { return Response.ok(query.filterOptions()); }
     @GetMapping("/{id}") public Response<ConversationDetail> detail(@PathVariable Long id) { return Response.ok(query.detail(id, CurrentUser.get())); }
     @GetMapping("/{id}/messages") public Response<CursorPage<MessageView>> messages(@PathVariable Long id,
             @RequestParam(required=false) String before, @RequestParam(defaultValue="50") int size) { return Response.ok(query.messages(id,before,size,CurrentUser.get())); }
