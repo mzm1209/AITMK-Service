@@ -15,6 +15,8 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * CRM leads_bank integration service with local DB fallback.
@@ -36,6 +38,7 @@ public class ClueIntegrationService {
     // ── Worksheet IDs ──
     private static final String CLUE_WORKSHEET_ID = "leads_bank";
     private static final String LOGIN_WORKSHEET_ID = "imzhgl";
+    private static final String CONTENT_WORKSHEET_ID = "68c2460eb75138cd755fb461";
 
     // ── leads_bank control IDs ──
     private static final String CLUE_PHONE                = "687fa4dd005dfd294df9dc3e";
@@ -50,6 +53,7 @@ public class ClueIntegrationService {
     private static final String CLUE_SCHOOL               = "66b3692d3e774217ade72e25";
     private static final String CLUE_GRADE                = "66b30ef13e774217ade66e77";
     private static final String CLUE_CONTENT              = "6736e7c6f53d52846e00b0a3";
+    private static final String CLUE_ACTIVITY             = "68c24754b75138cd755fb47b";
     private static final String CLUE_ASSIGN_TIME          = "66bb90bece042770da7b7041";
     private static final String CLUE_TMK                  = "68c252c0b75138cd755fb620";
     private static final String CLUE_FOLLOW_STAFF         = "66b3692d3e774217ade72e29";
@@ -68,12 +72,17 @@ public class ClueIntegrationService {
     private static final String LOGIN_RELATED_USER = "69abacc3433ec9f4b5e6ce26";
     private static final String LOGIN_ENABLED      = "6a322b23cd23604cb463cc08";
 
+    // ── nrgl content management control IDs ──
+    private static final String CONTENT_NAME = "68c2460eb75138cd755fb462";
+
     // ── Channel sid ──
     private static final String CHANNEL_META_SID = "80f32937-d16d-4d82-8d0c-739b596cfb39";
 
     // ── Time format (same as CRM) ──
     private static final DateTimeFormatter CRM_TIME_FORMAT =
             DateTimeFormatter.ofPattern("yyyy-M-d HH:mm:ss");
+    private static final Pattern ACTIVITY_CODE_PATTERN =
+            Pattern.compile("(?<![A-Za-z0-9])([A-Z0-9]{6,}(?:-[A-Z0-9]{2,})+)(?![A-Za-z0-9])");
 
     // ═══════════════════════════════════════════════════════════
     //  Public API
@@ -139,6 +148,33 @@ public class ClueIntegrationService {
     }
 
     /**
+     * Extract activity code from ad/referral text and resolve it to nrgl.rowid.
+     * CRM failures never block the customer-message workflow.
+     */
+    public Optional<String> resolveActivityRowIdFromAdContext(String... texts) {
+        Optional<String> code = extractActivityCode(texts);
+        if (code.isEmpty()) return Optional.empty();
+        try {
+            return lookupActivityRowIdByName(code.get());
+        } catch (Exception ex) {
+            log.warn("CRM activity lookup failed. activityCode={}", code.get(), ex);
+            return Optional.empty();
+        }
+    }
+
+    static Optional<String> extractActivityCode(String... texts) {
+        if (texts == null) return Optional.empty();
+        for (String text : texts) {
+            if (!StringUtils.hasText(text)) continue;
+            Matcher matcher = ACTIVITY_CODE_PATTERN.matcher(text);
+            if (matcher.find()) {
+                return Optional.of(matcher.group(1));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Reverse lookup: given a loginRowId (imzhgl rowid), return the corresponding
      * accountId used by CRM user-relation fields (e.g., TMK, 跟进员工).
      * Queries all imzhgl records and matches by rowid.
@@ -173,9 +209,13 @@ public class ClueIntegrationService {
      * CRM first; on failure, best-effort local update.
      */
     public void updateLeadOnAssignment(String rowId, String assignedAgentRowId) {
+        updateLeadOnAssignment(rowId, assignedAgentRowId, null);
+    }
+
+    public void updateLeadOnAssignment(String rowId, String assignedAgentRowId, String activityRowId) {
         if (!StringUtils.hasText(rowId) || !StringUtils.hasText(assignedAgentRowId)) return;
         try {
-            doUpdateCrmLead(rowId, assignedAgentRowId);
+            doUpdateCrmLead(rowId, assignedAgentRowId, activityRowId);
             // re-fetch from CRM to keep local copy consistent
             String phone = findPhoneByRowId(rowId);
             if (phone != null) {
@@ -184,7 +224,7 @@ public class ClueIntegrationService {
             }
         } catch (Exception ex) {
             log.warn("CRM lead update failed, update local only. rowId={}", rowId, ex);
-            updateLocalLeadOnAssignment(rowId, assignedAgentRowId);
+            updateLocalLeadOnAssignment(rowId, assignedAgentRowId, activityRowId);
         }
     }
 
@@ -196,9 +236,14 @@ public class ClueIntegrationService {
      */
     public Optional<LeadRecord> createLeadForNewCustomer(
             String phone, String contactName, String agentRowId) {
+        return createLeadForNewCustomer(phone, contactName, agentRowId, null);
+    }
+
+    public Optional<LeadRecord> createLeadForNewCustomer(
+            String phone, String contactName, String agentRowId, String activityRowId) {
         if (!StringUtils.hasText(phone)) return Optional.empty();
         try {
-            Optional<LeadRecord> crmLead = doCreateCrmLead(phone.trim(), contactName, agentRowId);
+            Optional<LeadRecord> crmLead = doCreateCrmLead(phone.trim(), contactName, agentRowId, activityRowId);
             if (crmLead.isPresent()) {
                 upsertLocalLead(phone.trim(), crmLead.get());
                 return crmLead;
@@ -206,7 +251,7 @@ public class ClueIntegrationService {
         } catch (Exception ex) {
             log.warn("CRM lead create failed, create local only. phone={}", phone, ex);
         }
-        LeadRecord localLead = buildLocalOnlyLead(phone.trim(), contactName, agentRowId);
+        LeadRecord localLead = buildLocalOnlyLead(phone.trim(), contactName, agentRowId, activityRowId);
         upsertLocalLead(phone.trim(), localLead);
         return Optional.of(localLead);
     }
@@ -226,20 +271,36 @@ public class ClueIntegrationService {
         return Optional.of(parseLeadRecord(rows.get(0)));
     }
 
-    private void doUpdateCrmLead(String rowId, String loginRowId) {
+    private Optional<String> lookupActivityRowIdByName(String activityCode) {
+        if (!StringUtils.hasText(activityCode)) return Optional.empty();
+        List<Map<String, Object>> filters = List.of(
+                filter(CONTENT_NAME, activityCode.trim(), 2, 1, 2));
+        JsonNode root = crm.frontendGetFilterRows(
+                CONTENT_WORKSHEET_ID, filters, 1, 1, 0, List.of());
+        if (root == null || !root.path("success").asBoolean(false)) return Optional.empty();
+        JsonNode rows = root.path("data").path("rows");
+        if (!rows.isArray() || rows.isEmpty()) return Optional.empty();
+        String rowId = rows.get(0).path("rowid").asText("");
+        return StringUtils.hasText(rowId) ? Optional.of(rowId) : Optional.empty();
+    }
+
+    private void doUpdateCrmLead(String rowId, String loginRowId, String activityRowId) {
         String accountId = resolveAccountIdFromLoginRowId(loginRowId).orElse(loginRowId);
         List<Map<String, Object>> controls = new ArrayList<>();
         controls.add(userRelationControl(CLUE_TMK, accountId));
         controls.add(userRelationControl(CLUE_FOLLOW_STAFF, accountId));
         controls.add(multiRelationControl(CLUE_LATEST_ENTRY_CHANNEL, CHANNEL_META_SID));
         controls.add(multiRelationControl(CLUE_LATEST_VISIT_CHANNEL, CHANNEL_META_SID));
+        if (StringUtils.hasText(activityRowId)) {
+            controls.add(relationControl(CLUE_ACTIVITY, activityRowId.trim()));
+        }
         JsonNode root = crm.frontendEditRow(CLUE_WORKSHEET_ID, rowId, controls, true);
         if (root == null || !root.path("success").asBoolean(false)) {
             log.warn("CRM editRow returned failure. rowId={}", rowId);
         }
     }
 
-    private Optional<LeadRecord> doCreateCrmLead(String phone, String contactName, String agentRowId) {
+    private Optional<LeadRecord> doCreateCrmLead(String phone, String contactName, String agentRowId, String activityRowId) {
         String parentName = StringUtils.hasText(contactName) ? contactName.trim() : phone;
         String now = nowString();
 
@@ -254,6 +315,9 @@ public class ClueIntegrationService {
         controls.add(multiRelationControl(CLUE_FIRST_CHANNEL, CHANNEL_META_SID));
         controls.add(multiRelationControl(CLUE_LATEST_ENTRY_CHANNEL, CHANNEL_META_SID));
         controls.add(multiRelationControl(CLUE_LATEST_VISIT_CHANNEL, CHANNEL_META_SID));
+        if (StringUtils.hasText(activityRowId)) {
+            controls.add(relationControl(CLUE_ACTIVITY, activityRowId.trim()));
+        }
 
         JsonNode root = crm.frontendAddRow(CLUE_WORKSHEET_ID, controls, true);
         if (root == null || !root.path("success").asBoolean(false)) {
@@ -284,12 +348,15 @@ public class ClueIntegrationService {
         }
     }
 
-    private void updateLocalLeadOnAssignment(String rowId, String agentRowId) {
+    private void updateLocalLeadOnAssignment(String rowId, String agentRowId, String activityRowId) {
         leadRepo.findByCrmRowId(rowId).ifPresent(entity -> {
             try {
                 LeadRecord lead = objectMapper.readValue(entity.getLeadData(), LeadRecord.class);
                 String agentJson = "[{\"accountId\":\"" + agentRowId + "\"}]";
                 lead.setTmk(agentJson);
+                if (StringUtils.hasText(activityRowId)) {
+                    lead.setActivity(activityRowId.trim());
+                }
                 entity.setLeadData(objectMapper.writeValueAsString(lead));
                 entity.setLeadsType(lead.getLeadsType());
                 entity.setLeadsStatus(lead.getLeadsStatus());
@@ -300,7 +367,7 @@ public class ClueIntegrationService {
         });
     }
 
-    private LeadRecord buildLocalOnlyLead(String phone, String contactName, String agentRowId) {
+    private LeadRecord buildLocalOnlyLead(String phone, String contactName, String agentRowId, String activityRowId) {
         String parentName = StringUtils.hasText(contactName) ? contactName.trim() : phone;
         String agentJson = "[{\"accountId\":\"" + agentRowId + "\"}]";
         String metaJson = "[{\"sid\":\"" + CHANNEL_META_SID + "\"}]";
@@ -315,6 +382,7 @@ public class ClueIntegrationService {
                 .assignedTime(now)
                 .tmk(agentJson)
                 .firstCreatChannel(metaJson)
+                .activity(StringUtils.hasText(activityRowId) ? activityRowId.trim() : null)
                 .build();
     }
 
@@ -343,6 +411,7 @@ public class ClueIntegrationService {
                 .school(extractText(row, CLUE_SCHOOL))
                 .grade(extractText(row, CLUE_GRADE))
                 .content(extractText(row, CLUE_CONTENT))
+                .activity(rawValue(row, CLUE_ACTIVITY))
                 .assignedTime(rawValue(row, CLUE_ASSIGN_TIME))
                 .tmk(extractText(row, CLUE_TMK))
                 .visitDate(rawValue(row, CLUE_VISIT_DATE))
@@ -413,6 +482,13 @@ public class ClueIntegrationService {
         Map<String, Object> item = new HashMap<>();
         item.put("controlId", controlId);
         item.put("value", sid);
+        return item;
+    }
+
+    private static Map<String, Object> relationControl(String controlId, String rowId) {
+        Map<String, Object> item = new HashMap<>();
+        item.put("controlId", controlId);
+        item.put("value", rowId);
         return item;
     }
 

@@ -36,6 +36,7 @@ public class ConversationCommandService {
     private final V2AccessService access;
     private final RealtimeEventService events;
     private final RealtimePayloadFactory payloads;
+    private final UnreadService unreadService;
 
     @Transactional
     public ConversationEntity transfer(Long id, V2Api.TransferRequest req, AuthenticatedUser user) {
@@ -74,6 +75,7 @@ public class ConversationCommandService {
         conversation.setStatus(ConversationStatus.HUMAN_ACTIVE);
         resources.saveAndFlush(resource);
         conversations.saveAndFlush(conversation);
+        unreadService.initializeForAssignment(conversation, req.targetAgentId());
 
         syncCrmTransfer(resource, req.targetAgentId());
 

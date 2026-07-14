@@ -30,6 +30,7 @@ public class LeadRecord {
     private String school;           // 66b3692d3e774217ade72e25 学校
     private String grade;            // 66b30ef13e774217ade66e77 年级
     private String content;          // 6736e7c6f53d52846e00b0a3 备注
+    private Object activity;         // 68c24754b75138cd755fb47b 活动
 
     // ── TMK assignment (2 fields) ──
     private Object assignedTime;     // 66bb90bece042770da7b7041 线索分配时间

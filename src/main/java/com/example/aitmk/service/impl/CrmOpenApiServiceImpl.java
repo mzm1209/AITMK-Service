@@ -75,6 +75,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
     private static final int CRM_CHAT_BOOTSTRAP_PAGE_SIZE = 100;
     private static final int CRM_WEBCLIENT_MAX_IN_MEMORY_BYTES = 2 * 1024 * 1024;
     private static final String CLUE_WORKSHEET_ID = "leads_bank";
+    private static final String CONTENT_WORKSHEET_ID = "68c2460eb75138cd755fb461";
     private static final String FOLLOW_UP_WORKSHEET_ID = "follow_up";
     private static final String APPOINTMENT_WORKSHEET_ID = "66e473021d111072e718410e";
 
@@ -674,6 +675,7 @@ public class CrmOpenApiServiceImpl implements CrmOpenApiService {
 
     private void putCredential(Map<String, Object> body, String worksheetId) {
         if ((CLUE_WORKSHEET_ID.equals(worksheetId)
+                || CONTENT_WORKSHEET_ID.equals(worksheetId)
                 || FOLLOW_UP_WORKSHEET_ID.equals(worksheetId)
                 || APPOINTMENT_WORKSHEET_ID.equals(worksheetId))
                 && crmConfig.getClue() != null

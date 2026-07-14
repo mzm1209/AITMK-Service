@@ -28,7 +28,7 @@ public class WebhookManualSimulator {
 
     public static void main(String[] args) throws Exception {
         String webhookUrl = args.length > 0 ? args[0] : "http://localhost:6153/webhook";
-        String from = args.length > 1 ? args[1] : "69907073400002"; //69907073400002
+        String from = args.length > 1 ? args[1] : "69906210000001"; //69907073400002
         String phoneNumberId = args.length > 2 ? args[2] : "1019964791197772";
         String mode = args.length > 3 ? args[3] : "ad";
         int count = args.length > 4 ? Integer.parseInt(args[4]) : 1;
@@ -73,7 +73,7 @@ public class WebhookManualSimulator {
                                   "thumbnail_url": "https://example.com/ad-video-thumb.jpg",
                                   "ctwa_clid": "ctwa_click_id_demo",
                                   "welcome_message": {
-                                    "text": "Hi, I came from your ad"
+                                    "text": "Halo, dengan wondermind bisa dibantu \\uD83D\\uDE0D【METADULEA220626VB-AM】"
                                   }
                                 }
                         """

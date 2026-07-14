@@ -243,6 +243,12 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 5) CRM lead integration + local assignment (CRM failures never block assignment)
             if (hasOnlineAgent) {
+                String activityRowId = clueIntegrationService.resolveActivityRowIdFromAdContext(
+                        parsed.getReferralWelcomeText(),
+                        parsed.getReferralHeadline(),
+                        parsed.getReferralBody(),
+                        customerContent
+                ).orElse(null);
                 // ── Step 5a: Look up CRM lead by phone (fallback to local DB) ──
                 LeadRecord lead = null;
                 try {
@@ -280,7 +286,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                             log.info("Lead TMK agent assigned directly. customer={}, tmkAgent={}", customerPhone, resolvedAgent);
                             if (StringUtils.hasText(lead.getRowId())) {
                                 try {
-                                    clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent);
+                                    clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent, activityRowId);
                                 } catch (Exception ex) {
                                     log.warn("Lead update after direct TMK assignment failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
                                 }
@@ -291,7 +297,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                         resolvedAgent = agentDispatchService.assignIfAbsent(customerPhone).orElse(null);
                         if (resolvedAgent != null && StringUtils.hasText(lead.getRowId())) {
                             try {
-                                clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent);
+                                clueIntegrationService.updateLeadOnAssignment(lead.getRowId(), resolvedAgent, activityRowId);
                             } catch (Exception ex) {
                                 log.warn("Lead update failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
                             }
@@ -303,7 +309,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     if (resolvedAgent != null) {
                         try {
                             lead = clueIntegrationService.createLeadForNewCustomer(
-                                    customerPhone, contactName, resolvedAgent).orElse(null);
+                                    customerPhone, contactName, resolvedAgent, activityRowId).orElse(null);
                         } catch (Exception ex) {
                             log.warn("Lead create failed. customer={}, agent={}", customerPhone, resolvedAgent, ex);
                         }

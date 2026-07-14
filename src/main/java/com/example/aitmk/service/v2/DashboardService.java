@@ -222,16 +222,29 @@ public class DashboardService {
 
     private List<Long> firstResponseSeconds(List<String> agents, Instant from, Instant toExclusive) {
         StringBuilder sql = new StringBuilder("""
-                select assigned_agent_id, first_customer_message_at, first_agent_reply_at
-                from conversation
-                where assigned_agent_id is not null
-                  and first_customer_message_at is not null
-                  and first_agent_reply_at is not null
-                  and first_agent_reply_at >= :from
-                  and first_agent_reply_at < :to
+                select c.assigned_agent_id,
+                       coalesce(message_first.first_customer_at, c.first_customer_message_at),
+                       coalesce(message_first.first_reply_at, c.first_agent_reply_at)
+                from conversation c
+                left join (
+                    select customer.conversation_id,
+                           min(customer.created_at) as first_customer_at,
+                           min(reply.created_at) as first_reply_at
+                    from chat_message customer
+                    join chat_message reply on reply.conversation_id = customer.conversation_id
+                      and reply.created_at > customer.created_at
+                      and reply.sender_type in ('AGENT', 'MANAGER')
+                    where customer.sender_type = 'CUSTOMER'
+                    group by customer.conversation_id
+                ) message_first on message_first.conversation_id = c.id
+                where c.assigned_agent_id is not null
+                  and coalesce(message_first.first_customer_at, c.first_customer_message_at) is not null
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) is not null
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) >= :from
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) < :to
                 """);
         Map<String, Object> params = new HashMap<>();
-        appendAgentFilter(sql, "assigned_agent_id", agents, params);
+        appendAgentFilter(sql, "c.assigned_agent_id", agents, params);
         Query query = em.createNativeQuery(sql.toString());
         query.setParameter("from", ts(from));
         query.setParameter("to", ts(toExclusive));
@@ -286,16 +299,29 @@ public class DashboardService {
     private void collectFirstResponse(List<String> agents, Instant from, Instant toExclusive, Granularity granularity,
                                       Map<String, List<Long>> byAgent, Map<String, List<Long>> byBucket) {
         StringBuilder sql = new StringBuilder("""
-                select assigned_agent_id, first_customer_message_at, first_agent_reply_at
-                from conversation
-                where assigned_agent_id is not null
-                  and first_customer_message_at is not null
-                  and first_agent_reply_at is not null
-                  and first_agent_reply_at >= :from
-                  and first_agent_reply_at < :to
+                select c.assigned_agent_id,
+                       coalesce(message_first.first_customer_at, c.first_customer_message_at),
+                       coalesce(message_first.first_reply_at, c.first_agent_reply_at)
+                from conversation c
+                left join (
+                    select customer.conversation_id,
+                           min(customer.created_at) as first_customer_at,
+                           min(reply.created_at) as first_reply_at
+                    from chat_message customer
+                    join chat_message reply on reply.conversation_id = customer.conversation_id
+                      and reply.created_at > customer.created_at
+                      and reply.sender_type in ('AGENT', 'MANAGER')
+                    where customer.sender_type = 'CUSTOMER'
+                    group by customer.conversation_id
+                ) message_first on message_first.conversation_id = c.id
+                where c.assigned_agent_id is not null
+                  and coalesce(message_first.first_customer_at, c.first_customer_message_at) is not null
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) is not null
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) >= :from
+                  and coalesce(message_first.first_reply_at, c.first_agent_reply_at) < :to
                 """);
         Map<String, Object> params = new HashMap<>();
-        appendAgentFilter(sql, "assigned_agent_id", agents, params);
+        appendAgentFilter(sql, "c.assigned_agent_id", agents, params);
         Query query = em.createNativeQuery(sql.toString());
         query.setParameter("from", ts(from));
         query.setParameter("to", ts(toExclusive));

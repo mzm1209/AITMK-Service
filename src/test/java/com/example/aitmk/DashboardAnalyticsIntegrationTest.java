@@ -79,6 +79,33 @@ class DashboardAnalyticsIntegrationTest {
     }
 
     @Test
+    void analyticsComputesFirstResponseFromMessagesWhenConversationFactsAreMissing() {
+        String prefix = prefix();
+        String agent = prefix + "-agent";
+        agentAccounts.upsert(agent, "TMK " + prefix, AgentRole.TMK, List.of());
+
+        Fixture fixture = fixture(prefix + "-phone-1", agent, Instant.parse("2026-07-12T02:00:00Z"));
+        fixture.conversation().setFirstCustomerMessageAt(null);
+        fixture.conversation().setFirstAgentReplyAt(null);
+        conversations.saveAndFlush(fixture.conversation());
+        message(fixture, PersistenceEnums.SenderType.CUSTOMER, Instant.parse("2026-07-12T02:00:00Z"));
+        message(fixture, PersistenceEnums.SenderType.AGENT, Instant.parse("2026-07-12T02:04:00Z"));
+
+        DashboardAnalytics result = dashboard.analytics(
+                user(agent, AgentRole.TMK, List.of()),
+                "mine", "day", "2026-07-12", "2026-07-14", null);
+
+        assertThat(result.cards().firstResponseAvgSeconds()).isEqualTo(240);
+        assertThat(result.cards().firstResponseP50Seconds()).isEqualTo(240);
+        assertThat(result.responseTrend()).filteredOn(p -> p.bucket().equals("2026-07-12"))
+                .singleElement().extracting("firstResponseAvgSeconds").isEqualTo(240L);
+        assertThat(result.agentStats()).anySatisfy(stats -> {
+            assertThat(stats.agentId()).isEqualTo(agent);
+            assertThat(stats.firstResponseAvgSeconds()).isEqualTo(240);
+        });
+    }
+
+    @Test
     void optionalAgentIdMustBeInsideBackendComputedScope() {
         String manager = prefix() + "-manager";
         AuthenticatedUser user = user(manager, AgentRole.MANAGER, List.of("visible-agent"));

@@ -220,6 +220,31 @@ class RealtimeEventContractIntegrationTest {
     }
 
     @Test
+    void transferInitializesUnreadForTargetAgentBeforeConversationSnapshot() throws Exception {
+        Fixture fixture = fixture("agent-transfer-old");
+        message(fixture, "customer-before-transfer-a");
+        message(fixture, PersistenceEnums.SenderType.AGENT, "agent-before-transfer");
+        message(fixture, "customer-before-transfer-b");
+        AuthenticatedUser owner = user("owner-transfer-unread");
+        String targetAgent = "agent-transfer-new";
+
+        conversationCommands.transfer(fixture.conversation().getId(),
+                new V2Api.TransferRequest(targetAgent, "handoff", fixture.conversation().getVersion()), owner);
+
+        ConversationAgentStateEntity targetState = states
+                .findByConversationIdAndAgentId(fixture.conversation().getId(), targetAgent).orElseThrow();
+        assertThat(targetState.getUnreadCount()).isEqualTo(2);
+
+        List<RealtimeEventEntity> updates = eventRepository
+                .findByConversationIdAndEventTypeOrderByIdAsc(fixture.conversation().getId(), "CONVERSATION_UPDATED");
+        RealtimeEventEntity targetUpdate = updates.stream()
+                .filter(event -> targetAgent.equals(event.getTargetAgentId()))
+                .reduce((first, second) -> second)
+                .orElseThrow();
+        assertThat(payload(targetUpdate).path("unreadCount").asLong()).isEqualTo(2);
+    }
+
+    @Test
     void recoveryAndSocketViewShareTheSameSnapshotAndCorruptionIsRejected() {
         Fixture fixture = fixture("agent-recover");
         V2Api.ConversationSummary snapshot = payloads.conversation(fixture.conversation(), fixture.agent());
