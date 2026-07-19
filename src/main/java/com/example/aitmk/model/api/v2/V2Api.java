@@ -93,6 +93,63 @@ public final class V2Api {
             Long averageResponseP90Seconds,
             long activeConversations,
             long resolvedConversations) {}
+
+    // ── AI Daily Reports ──
+    public record AiDailyReportGenerateRequest(String reportDate, String generationType, String scope, Boolean force) {}
+    public record AiDailyReportListView(List<AiDailyReportSummaryView> items) {}
+    public record AiDailyReportSummaryView(
+            String id,
+            String reportDate,
+            int version,
+            String status,
+            String generationType,
+            String scope,
+            String executiveSummary,
+            String riskLevel,
+            Integer businessHealthScore,
+            String createdBy,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant startedAt,
+            Instant completedAt) {}
+    public record AiDailyReportView(
+            String id,
+            String reportDate,
+            int version,
+            String status,
+            String generationType,
+            String scope,
+            String snapshotJson,
+            String aiResultJson,
+            String executiveSummary,
+            String riskLevel,
+            Integer businessHealthScore,
+            String difyRunId,
+            String errorMessage,
+            String createdBy,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant startedAt,
+            Instant completedAt,
+            List<AiDailyReportConversationView> conversations) {}
+    public record AiDailyReportConversationView(
+            String id,
+            String reportId,
+            String conversationId,
+            String customerPhone,
+            String agentId,
+            String agentName,
+            Integer messageCount,
+            Integer customerMessageCount,
+            Integer agentMessageCount,
+            Integer priorityScore,
+            String appointmentStatus,
+            String resolvedStatus,
+            Integer timeoutCount,
+            String conversationSnapshotJson,
+            String aiResultJson,
+            Instant createdAt,
+            Instant updatedAt) {}
     public record ReadRequest(String lastReadMessageId) {}
     public record ReadResult(String conversationId, String agentId, String lastReadMessageId, Instant lastReadAt, long unreadCount) {}
     public record TransferRequest(String targetAgentId, String reason, long expectedVersion) {}
