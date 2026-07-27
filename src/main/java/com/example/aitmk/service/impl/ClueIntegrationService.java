@@ -1,13 +1,16 @@
 package com.example.aitmk.service.impl;
 
 import com.example.aitmk.model.domain.LeadRecord;
+import com.example.aitmk.model.entity.ChatMessageEntity;
 import com.example.aitmk.model.entity.LeadRecordEntity;
+import com.example.aitmk.repository.ChatMessageRepository;
 import com.example.aitmk.repository.LeadRecordRepository;
 import com.example.aitmk.service.CrmOpenApiService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -33,6 +36,7 @@ public class ClueIntegrationService {
 
     private final CrmOpenApiService crm;
     private final LeadRecordRepository leadRepo;
+    private final ChatMessageRepository messageRepo;
     private final ObjectMapper objectMapper;
 
     // ── Worksheet IDs ──
@@ -160,6 +164,45 @@ public class ClueIntegrationService {
             log.warn("CRM activity lookup failed. activityCode={}", code.get(), ex);
             return Optional.empty();
         }
+    }
+
+    /**
+     * Resolve activity from the current webhook texts, falling back to persisted
+     * ad/referral message history. This covers delayed assignment paths where
+     * the original webhook context is no longer on the stack.
+     */
+    public Optional<String> resolveActivityRowIdForCustomer(String customerPhone, String... currentTexts) {
+        Optional<String> direct = resolveActivityRowIdFromAdContext(currentTexts);
+        if (direct.isPresent()) return direct;
+        if (!StringUtils.hasText(customerPhone)) return Optional.empty();
+        try {
+            List<ChatMessageEntity> candidates = messageRepo.findRecentActivityContext(
+                    customerPhone.trim(), PageRequest.of(0, 20));
+            for (ChatMessageEntity message : candidates) {
+                Optional<String> rowId = resolveActivityRowIdFromAdContext(
+                        message.getReferralWelcomeText(),
+                        message.getReferralHeadline(),
+                        message.getReferralBody(),
+                        message.getContent());
+                if (rowId.isPresent()) return rowId;
+            }
+        } catch (Exception ex) {
+            log.warn("Resolve activity from message history failed. customer={}", customerPhone, ex);
+        }
+        return Optional.empty();
+    }
+
+    public Optional<LeadRecord> syncLeadOnAssignment(
+            String phone, String contactName, String assignedAgentRowId, String activityRowId) {
+        if (!StringUtils.hasText(phone) || !StringUtils.hasText(assignedAgentRowId)) {
+            return Optional.empty();
+        }
+        Optional<LeadRecord> leadOpt = lookupLeadByPhone(phone.trim());
+        if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
+            updateLeadOnAssignment(leadOpt.get().getRowId(), assignedAgentRowId, activityRowId);
+            return lookupLeadByPhone(phone.trim()).or(() -> leadOpt);
+        }
+        return createLeadForNewCustomer(phone.trim(), contactName, assignedAgentRowId, activityRowId);
     }
 
     static Optional<String> extractActivityCode(String... texts) {

@@ -17,6 +17,10 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
     Page<ChatMessageEntity> findByCustomerPhone(String customerPhone, Pageable pageable);
     Optional<ChatMessageEntity> findFirstByCustomerPhoneOrderByCreatedAtDescIdDesc(String customerPhone);
     Optional<ChatMessageEntity> findFirstByCustomerPhoneAndSenderTypeOrderByCreatedAtDescIdDesc(String customerPhone, SenderType senderType);
+    @Query("select m from ChatMessageEntity m where m.customerPhone=:customerPhone and " +
+            "(m.referralWelcomeText is not null or m.referralHeadline is not null or m.referralBody is not null or m.content like '%-%') " +
+            "order by m.createdAt desc,m.id desc")
+    List<ChatMessageEntity> findRecentActivityContext(@Param("customerPhone") String customerPhone, Pageable pageable);
     Optional<ChatMessageEntity> findByClientRequestId(String clientRequestId);
     Optional<ChatMessageEntity> findFirstByResourceIdOrderByCreatedAtDescIdDesc(Long resourceId);
     List<ChatMessageEntity> findByConversationIdOrderByCreatedAtDescIdDesc(Long conversationId, Pageable pageable);

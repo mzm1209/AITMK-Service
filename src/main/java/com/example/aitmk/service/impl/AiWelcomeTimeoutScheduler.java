@@ -88,14 +88,15 @@ public class AiWelcomeTimeoutScheduler {
                         conversation.getCustomerPhone(), agentRowId);
                 try {
                     String phone = conversation.getCustomerPhone();
+                    String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(phone).orElse(null);
                     var leadOpt = clueIntegrationService.lookupLeadByPhone(phone);
                     if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
-                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId, activityRowId);
                         log.info("Lead updated after welcome-timeout assignment. customer={}, agent={}", phone, agentRowId);
                     } else {
                         String contactName = resourceRepository.findByCustomerPhone(phone)
                                 .map(r -> r.getCustomerName()).orElse(null);
-                        clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId);
+                        clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId, activityRowId);
                         log.info("Lead created after welcome-timeout assignment. customer={}, agent={}", phone, agentRowId);
                     }
                 } catch (Exception ex) {

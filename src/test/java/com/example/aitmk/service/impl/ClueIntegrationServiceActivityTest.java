@@ -1,10 +1,13 @@
 package com.example.aitmk.service.impl;
 
 import com.example.aitmk.repository.LeadRecordRepository;
+import com.example.aitmk.repository.ChatMessageRepository;
 import com.example.aitmk.service.CrmOpenApiService;
+import com.example.aitmk.model.entity.ChatMessageEntity;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.data.domain.Pageable;
 
 import java.util.List;
 import java.util.Map;
@@ -32,7 +35,8 @@ class ClueIntegrationServiceActivityTest {
     void resolvesActivityRowIdByContentName() throws Exception {
         CrmOpenApiService crm = mock(CrmOpenApiService.class);
         LeadRecordRepository repo = mock(LeadRecordRepository.class);
-        ClueIntegrationService service = new ClueIntegrationService(crm, repo, objectMapper);
+        ChatMessageRepository messages = mock(ChatMessageRepository.class);
+        ClueIntegrationService service = new ClueIntegrationService(crm, repo, messages, objectMapper);
 
         when(crm.frontendGetFilterRows(eq("68c2460eb75138cd755fb461"), anyList(), eq(1), eq(1), eq(0), anyList()))
                 .thenReturn(objectMapper.readTree("""
@@ -59,7 +63,8 @@ class ClueIntegrationServiceActivityTest {
     void createsLeadWithActivityRelationWhenActivityRowIdExists() throws Exception {
         CrmOpenApiService crm = mock(CrmOpenApiService.class);
         LeadRecordRepository repo = mock(LeadRecordRepository.class);
-        ClueIntegrationService service = new ClueIntegrationService(crm, repo, objectMapper);
+        ChatMessageRepository messages = mock(ChatMessageRepository.class);
+        ClueIntegrationService service = new ClueIntegrationService(crm, repo, messages, objectMapper);
 
         when(repo.findByCustomerPhone("6288880000111")).thenReturn(Optional.empty());
         when(crm.frontendGetFilterRows(eq("imzhgl"), anyList(), eq(200), eq(1), eq(0), anyList()))
@@ -83,5 +88,26 @@ class ClueIntegrationServiceActivityTest {
             assertThat(control).containsEntry("controlId", "68c24754b75138cd755fb47b");
             assertThat(control).containsEntry("value", "nrgl-row-1");
         });
+    }
+
+    @Test
+    void resolvesActivityRowIdFromPersistedMessageHistory() throws Exception {
+        CrmOpenApiService crm = mock(CrmOpenApiService.class);
+        LeadRecordRepository repo = mock(LeadRecordRepository.class);
+        ChatMessageRepository messages = mock(ChatMessageRepository.class);
+        ClueIntegrationService service = new ClueIntegrationService(crm, repo, messages, objectMapper);
+        ChatMessageEntity message = new ChatMessageEntity();
+        message.setCustomerPhone("6288880000111");
+        message.setReferralWelcomeText("Halo [METADULEA220626VB-AM]");
+        when(messages.findRecentActivityContext(eq("6288880000111"), any(Pageable.class)))
+                .thenReturn(List.of(message));
+        when(crm.frontendGetFilterRows(eq("68c2460eb75138cd755fb461"), anyList(), eq(1), eq(1), eq(0), anyList()))
+                .thenReturn(objectMapper.readTree("""
+                        {"success":true,"data":{"rows":[{"rowid":"nrgl-row-1"}]}}
+                        """));
+
+        Optional<String> rowId = service.resolveActivityRowIdForCustomer("6288880000111");
+
+        assertThat(rowId).contains("nrgl-row-1");
     }
 }

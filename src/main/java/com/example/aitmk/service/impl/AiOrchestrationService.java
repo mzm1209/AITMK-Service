@@ -236,14 +236,15 @@ public class AiOrchestrationService {
                 conversationRepository.save(conversation);
                 log.info("Customer transferred to agent. customer={}, agent={}", customerPhone, agentRowId);
                 try {
+                    String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(customerPhone).orElse(null);
                     var leadOpt = clueIntegrationService.lookupLeadByPhone(customerPhone);
                     if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
-                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                        clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId, activityRowId);
                         log.info("Lead updated after learning-center assignment. customer={}, agent={}", customerPhone, agentRowId);
                     } else {
                         String contactName = resourceRepository.findByCustomerPhone(customerPhone)
                                 .map(r -> r.getCustomerName()).orElse(null);
-                        clueIntegrationService.createLeadForNewCustomer(customerPhone, contactName, agentRowId);
+                        clueIntegrationService.createLeadForNewCustomer(customerPhone, contactName, agentRowId, activityRowId);
                         log.info("Lead created after learning-center assignment. customer={}, agent={}", customerPhone, agentRowId);
                     }
                 } catch (Exception ex) {

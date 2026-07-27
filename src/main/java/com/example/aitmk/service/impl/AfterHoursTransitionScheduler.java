@@ -88,13 +88,14 @@ public class AfterHoursTransitionScheduler {
                             conversation.getCustomerPhone(), agentRowId);
                     try {
                         String phone = conversation.getCustomerPhone();
+                        String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(phone).orElse(null);
                         var leadOpt = clueIntegrationService.lookupLeadByPhone(phone);
                         if (leadOpt.isPresent() && StringUtils.hasText(leadOpt.get().getRowId())) {
-                            clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId);
+                            clueIntegrationService.updateLeadOnAssignment(leadOpt.get().getRowId(), agentRowId, activityRowId);
                             log.info("Lead updated after after-hours assignment. customer={}, agent={}", phone, agentRowId);
                         } else {
                             String contactName = resource.getCustomerName();
-                            clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId);
+                            clueIntegrationService.createLeadForNewCustomer(phone, contactName, agentRowId, activityRowId);
                             log.info("Lead created after after-hours assignment. customer={}, agent={}", phone, agentRowId);
                         }
                     } catch (Exception ex) {

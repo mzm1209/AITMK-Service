@@ -72,12 +72,13 @@ public class AgentOnlineAssignmentHandler {
 
     private void syncLead(String customerPhone, String assignedAgent) {
         try {
+            String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(customerPhone).orElse(null);
             var lead = clueIntegrationService.lookupLeadByPhone(customerPhone)
                     .or(() -> clueIntegrationService.createLeadForNewCustomer(
-                            customerPhone, customerPhone, assignedAgent));
+                            customerPhone, customerPhone, assignedAgent, activityRowId));
             lead.map(com.example.aitmk.model.domain.LeadRecord::getRowId)
                     .filter(rowId -> rowId != null && !rowId.isBlank())
-                    .ifPresent(rowId -> clueIntegrationService.updateLeadOnAssignment(rowId, assignedAgent));
+                    .ifPresent(rowId -> clueIntegrationService.updateLeadOnAssignment(rowId, assignedAgent, activityRowId));
         } catch (Exception ex) {
             log.warn("CRM lead sync failed after online assignment. customer={}, agent={}",
                     customerPhone, assignedAgent, ex);

@@ -1,5 +1,6 @@
 package com.example.aitmk.service.v2;
 
+import com.example.aitmk.config.AiDailyReportProperties;
 import com.example.aitmk.model.api.v2.V2Api.*;
 import com.example.aitmk.model.api.v2.V2Exception;
 import com.example.aitmk.security.auth.AuthenticatedUser;
@@ -23,6 +24,8 @@ import java.util.*;
 @RequiredArgsConstructor
 public class DashboardService {
     private static final ZoneId SERVER_ZONE = ZoneId.systemDefault();
+    private static final Set<String> KNOWN_ABNORMAL_AGENT_IDS = Set.of(
+            "owner-1", "tmk-1", "tmk-2");
     private static final Set<String> RESOLVED_LEAD_STATUSES = Set.of("Paid", "Not qualified", "无效", "Returned");
     private static final String LEAD_STATUS_FIELD_ID = "66b5e34a7e23d13674f24129";
 
@@ -30,6 +33,7 @@ public class DashboardService {
     private final V2AccessService access;
     private final AgentAccountCacheService agentAccounts;
     private final ObjectMapper objectMapper;
+    private final AiDailyReportProperties dailyReportProperties;
 
     @Transactional(readOnly = true)
     public DashboardSummary summary(AuthenticatedUser user, String rawScope) {
@@ -62,6 +66,7 @@ public class DashboardService {
             access.requireAgentWithinScope(user, scope, agentId.trim());
             scopedAgents = List.of(agentId.trim());
         }
+        boolean includeUnassignedLeads = scope == V2AccessService.DataScope.ALL && !StringUtils.hasText(agentId);
 
         Granularity granularity = parseGranularity(rawGranularity);
         LocalDate fromDate = parseDate(fromStr, "from");
@@ -70,22 +75,28 @@ public class DashboardService {
             throw new V2Exception(HttpStatus.BAD_REQUEST, "INVALID_ARGUMENT", "to 不能早于 from");
         }
 
-        Instant from = fromDate.atStartOfDay(SERVER_ZONE).toInstant();
-        Instant toExclusive = toDate.plusDays(1).atStartOfDay(SERVER_ZONE).toInstant();
-        List<String> buckets = buckets(fromDate, toDate, granularity);
+        ZoneId businessZone = businessZone();
+        Instant from = fromDate.atStartOfDay(businessZone).toInstant();
+        Instant toExclusive = toDate.plusDays(1).atStartOfDay(businessZone).toInstant();
+        List<String> buckets = buckets(fromDate, toDate, granularity, businessZone);
+        List<String> leadAgents = dashboardLeadAgents(scopedAgents);
 
         Map<String, Long> leadByAgent = new HashMap<>();
+        Map<String, Long> assignedLeadByBucket = zeroLongBuckets(buckets);
+        Map<String, Long> unassignedLeadByBucket = zeroLongBuckets(buckets);
         Map<String, Long> activeByAgent = new HashMap<>();
         Map<String, Long> resolvedByAgent = new HashMap<>();
         Map<String, List<Long>> firstResponseByAgent = new HashMap<>();
         Map<String, List<Long>> averageResponseByAgent = new HashMap<>();
-        Map<String, Long> leadByBucket = zeroLongBuckets(buckets);
         Map<String, List<Long>> firstResponseByBucket = emptyListBuckets(buckets);
         Map<String, List<Long>> averageResponseByBucket = emptyListBuckets(buckets);
 
-        collectLeadCounts(scopedAgents, from, toExclusive, granularity, leadByAgent, leadByBucket);
-        collectFirstResponse(scopedAgents, from, toExclusive, granularity, firstResponseByAgent, firstResponseByBucket);
-        collectAverageResponse(scopedAgents, from, toExclusive, granularity, averageResponseByAgent, averageResponseByBucket);
+        collectLeadCounts(leadAgents, from, toExclusive, granularity, businessZone, leadByAgent, assignedLeadByBucket);
+        if (includeUnassignedLeads) {
+            collectUnassignedLeadCounts(from, toExclusive, granularity, businessZone, unassignedLeadByBucket);
+        }
+        collectFirstResponse(scopedAgents, from, toExclusive, granularity, businessZone, firstResponseByAgent, firstResponseByBucket);
+        collectAverageResponse(scopedAgents, from, toExclusive, granularity, businessZone, averageResponseByAgent, averageResponseByBucket);
         collectActiveConversations(scopedAgents, activeByAgent);
         collectResolvedConversations(scopedAgents, from, toExclusive, resolvedByAgent);
 
@@ -113,13 +124,17 @@ public class DashboardService {
 
         List<Long> allFirstResponses = flatten(firstResponseByAgent);
         List<Long> allAverageResponses = flatten(averageResponseByAgent);
-        long leadCount = leadByAgent.values().stream().mapToLong(Long::longValue).sum();
+        long assignedLeadCount = leadByAgent.values().stream().mapToLong(Long::longValue).sum();
+        long unassignedLeadCount = unassignedLeadByBucket.values().stream().mapToLong(Long::longValue).sum();
+        long leadCount = assignedLeadCount + unassignedLeadCount;
         long active = activeByAgent.values().stream().mapToLong(Long::longValue).sum();
         long resolved = resolvedByAgent.values().stream().mapToLong(Long::longValue).sum();
         double averageResolved = agentStats.isEmpty() ? 0.0 : round1((double) resolved / agentStats.size());
 
         DashboardAnalyticsCards cards = new DashboardAnalyticsCards(
                 leadCount,
+                assignedLeadCount,
+                unassignedLeadCount,
                 averageSeconds(allFirstResponses),
                 percentile(allFirstResponses, .5, true),
                 percentile(allFirstResponses, .9, true),
@@ -130,7 +145,11 @@ public class DashboardService {
                 averageResolved);
 
         List<LeadTrendPoint> leadTrend = buckets.stream()
-                .map(bucket -> new LeadTrendPoint(bucket, leadByBucket.getOrDefault(bucket, 0L)))
+                .map(bucket -> {
+                    long assigned = assignedLeadByBucket.getOrDefault(bucket, 0L);
+                    long unassigned = unassignedLeadByBucket.getOrDefault(bucket, 0L);
+                    return new LeadTrendPoint(bucket, assigned + unassigned, assigned, unassigned);
+                })
                 .toList();
         List<ResponseTrendPoint> responseTrend = buckets.stream()
                 .map(bucket -> new ResponseTrendPoint(bucket,
@@ -261,27 +280,44 @@ public class DashboardService {
     private List<Long> averageResponseSeconds(List<String> agents, Instant from, Instant toExclusive) {
         Map<String, List<Long>> byAgent = new HashMap<>();
         Map<String, List<Long>> byBucket = new HashMap<>();
-        collectAverageResponse(agents, from, toExclusive, Granularity.DAY, byAgent, byBucket);
+        collectAverageResponse(agents, from, toExclusive, Granularity.DAY, businessZone(), byAgent, byBucket);
         return flatten(byAgent);
     }
 
     private void collectLeadCounts(List<String> agents, Instant from, Instant toExclusive, Granularity granularity,
-                                   Map<String, Long> byAgent, Map<String, Long> byBucket) {
+                                   ZoneId zone, Map<String, Long> byAgent, Map<String, Long> byBucket) {
         StringBuilder sql = new StringBuilder("""
-                select a.agent_id, a.assigned_at
-                from assignment_record a
-                where a.assigned_at >= :from
-                  and a.assigned_at < :to
-                  and not exists (
-                    select 1
-                    from assignment_record prior
-                    where prior.resource_id = a.resource_id
-                      and (prior.assigned_at < a.assigned_at
-                        or (prior.assigned_at = a.assigned_at and prior.id < a.id))
-                  )
+                select c.assigned_agent_id,
+                       coalesce(first_customer.first_customer_at, c.first_customer_message_at, c.created_at)
+                from conversation c
+                join (
+                    select a.resource_id, min(a.assigned_at) as assigned_at
+                    from assignment_record a
+                    where a.assigned_at >= :from
+                      and a.assigned_at < :to
+                      and not exists (
+                        select 1
+                        from assignment_record prior
+                        where prior.resource_id = a.resource_id
+                          and (prior.assigned_at < a.assigned_at
+                            or (prior.assigned_at = a.assigned_at and prior.id < a.id))
+                      )
                 """);
         Map<String, Object> params = new HashMap<>();
         appendAgentFilter(sql, "a.agent_id", agents, params);
+        sql.append("""
+                    group by a.resource_id
+                ) first_assignment on first_assignment.resource_id = c.resource_id
+                left join (
+                    select conversation_id, min(created_at) as first_customer_at
+                    from chat_message
+                    where sender_type = 'CUSTOMER'
+                    group by conversation_id
+                ) first_customer on first_customer.conversation_id = c.id
+                where first_assignment.assigned_at >= :from
+                  and first_assignment.assigned_at < :to
+                """);
+        appendAgentFilter(sql, "c.assigned_agent_id", agents, params);
         Query query = em.createNativeQuery(sql.toString());
         query.setParameter("from", ts(from));
         query.setParameter("to", ts(toExclusive));
@@ -290,14 +326,36 @@ public class DashboardService {
         List<Object[]> rows = query.getResultList();
         for (Object[] row : rows) {
             String agent = str(row[0]);
-            if (!StringUtils.hasText(agent)) continue;
+            Instant leadCreatedAt = toInstant(row[1]);
+            if (!StringUtils.hasText(agent) || leadCreatedAt == null
+                    || leadCreatedAt.isBefore(from) || !leadCreatedAt.isBefore(toExclusive)) continue;
             byAgent.merge(agent, 1L, Long::sum);
-            byBucket.merge(bucket(toInstant(row[1]), granularity), 1L, Long::sum);
+            byBucket.merge(bucket(leadCreatedAt, granularity, zone), 1L, Long::sum);
+        }
+    }
+
+    private void collectUnassignedLeadCounts(Instant from, Instant toExclusive, Granularity granularity,
+                                             ZoneId zone, Map<String, Long> byBucket) {
+        Query query = em.createNativeQuery("""
+                select created_at
+                from conversation
+                where created_at >= :from
+                  and created_at < :to
+                  and (assigned_agent_id is null or assigned_agent_id = '')
+                """);
+        query.setParameter("from", ts(from));
+        query.setParameter("to", ts(toExclusive));
+        @SuppressWarnings("unchecked")
+        List<Object> rows = query.getResultList();
+        for (Object row : rows) {
+            Instant createdAt = toInstant(row);
+            if (createdAt == null) continue;
+            byBucket.merge(bucket(createdAt, granularity, zone), 1L, Long::sum);
         }
     }
 
     private void collectFirstResponse(List<String> agents, Instant from, Instant toExclusive, Granularity granularity,
-                                      Map<String, List<Long>> byAgent, Map<String, List<Long>> byBucket) {
+                                      ZoneId zone, Map<String, List<Long>> byAgent, Map<String, List<Long>> byBucket) {
         StringBuilder sql = new StringBuilder("""
                 select c.assigned_agent_id,
                        coalesce(message_first.first_customer_at, c.first_customer_message_at),
@@ -333,12 +391,12 @@ public class DashboardService {
             Long seconds = secondsBetween(row[1], row[2]);
             if (!StringUtils.hasText(agent) || seconds == null) continue;
             byAgent.computeIfAbsent(agent, ignored -> new ArrayList<>()).add(seconds);
-            byBucket.computeIfAbsent(bucket(toInstant(row[2]), granularity), ignored -> new ArrayList<>()).add(seconds);
+            byBucket.computeIfAbsent(bucket(toInstant(row[2]), granularity, zone), ignored -> new ArrayList<>()).add(seconds);
         }
     }
 
     private void collectAverageResponse(List<String> agents, Instant from, Instant toExclusive, Granularity granularity,
-                                        Map<String, List<Long>> byAgent, Map<String, List<Long>> byBucket) {
+                                        ZoneId zone, Map<String, List<Long>> byAgent, Map<String, List<Long>> byBucket) {
         StringBuilder sql = new StringBuilder("""
                 select c.assigned_agent_id, customer.created_at, min(reply.created_at)
                 from chat_message customer
@@ -365,7 +423,7 @@ public class DashboardService {
             Long seconds = secondsBetween(row[1], row[2]);
             if (!StringUtils.hasText(agent) || seconds == null) continue;
             byAgent.computeIfAbsent(agent, ignored -> new ArrayList<>()).add(seconds);
-            byBucket.computeIfAbsent(bucket(toInstant(row[1]), granularity), ignored -> new ArrayList<>()).add(seconds);
+            byBucket.computeIfAbsent(bucket(toInstant(row[1]), granularity, zone), ignored -> new ArrayList<>()).add(seconds);
         }
     }
 
@@ -421,6 +479,32 @@ public class DashboardService {
         return new LinkedHashSet<>(ids);
     }
 
+    private List<String> dashboardLeadAgents(List<String> scopedAgents) {
+        List<String> realTmkAgents = realTmkAgents();
+        if (scopedAgents == null) return realTmkAgents;
+        Set<String> allowed = new LinkedHashSet<>(scopedAgents);
+        return realTmkAgents.stream().filter(allowed::contains).toList();
+    }
+
+    private List<String> realTmkAgents() {
+        @SuppressWarnings("unchecked")
+        List<String> ids = em.createNativeQuery("""
+                select row_id
+                from agent_accounts
+                where upper(role) = 'TMK'
+                  and login_account is not null
+                  and login_account <> ''
+                """).getResultList();
+        return ids.stream()
+                .filter(this::isRealAgent)
+                .sorted()
+                .toList();
+    }
+
+    private boolean isRealAgent(String id) {
+        return StringUtils.hasText(id) && !KNOWN_ABNORMAL_AGENT_IDS.contains(id.trim());
+    }
+
     private void appendAgentFilter(StringBuilder sql, String column, List<String> agents, Map<String, Object> params) {
         if (agents == null) return;
         if (agents.isEmpty()) {
@@ -473,11 +557,17 @@ public class DashboardService {
         }
     }
 
-    private List<String> buckets(LocalDate from, LocalDate to, Granularity granularity) {
+    private ZoneId businessZone() {
+        return ZoneId.of(StringUtils.hasText(dailyReportProperties.getZone())
+                ? dailyReportProperties.getZone()
+                : "Asia/Jakarta");
+    }
+
+    private List<String> buckets(LocalDate from, LocalDate to, Granularity granularity, ZoneId zone) {
         List<String> result = new ArrayList<>();
         LocalDate cursor = bucketStart(from, granularity);
         while (!cursor.isAfter(to)) {
-            result.add(bucket(cursor.atStartOfDay(SERVER_ZONE).toInstant(), granularity));
+            result.add(bucket(cursor.atStartOfDay(zone).toInstant(), granularity, zone));
             cursor = switch (granularity) {
                 case DAY -> cursor.plusDays(1);
                 case WEEK -> cursor.plusWeeks(1);
@@ -487,8 +577,8 @@ public class DashboardService {
         return result;
     }
 
-    private String bucket(Instant instant, Granularity granularity) {
-        LocalDate date = LocalDateTime.ofInstant(instant, SERVER_ZONE).toLocalDate();
+    private String bucket(Instant instant, Granularity granularity, ZoneId zone) {
+        LocalDate date = LocalDateTime.ofInstant(instant, zone).toLocalDate();
         return switch (granularity) {
             case DAY -> date.toString();
             case WEEK -> bucketStart(date, granularity).toString();

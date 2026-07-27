@@ -142,6 +142,13 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
                     rawCustomerPhone, customerPhone, parsed.getType(), StringUtils.hasText(parsed.getText()), lastCustomerBefore);
 
             String assignedAgent = lookupAssignedAgent(rawCustomerPhone, customerPhone);
+            String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(
+                    customerPhone,
+                    parsed.getReferralWelcomeText(),
+                    parsed.getReferralHeadline(),
+                    parsed.getReferralBody(),
+                    customerContent
+            ).orElse(null);
 
             if (StringUtils.hasText(assignedAgent) && lastCustomerBefore != null
                     && Duration.between(lastCustomerBefore, Instant.now()).toHours() > 24L * 30L) {
@@ -188,6 +195,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             if (StringUtils.hasText(assignedAgent) && assignedAgentOnline) {
                 // 已有坐席接待且在线：停止 AI 自动回复，仅推送给坐席
+                syncLeadActivityIfPresent(customerPhone, contactName, assignedAgent, activityRowId);
                 try {
                     agentPushService.pushNewMessage(assignedAgent, customerPhone, customerRecord);
                     log.info("Pushed new customer message to assigned agent. agent={}, customer={}", assignedAgent, customerPhone);
@@ -199,6 +207,7 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             if (StringUtils.hasText(assignedAgent)) {
                 // 已有坐席接待但离线：保持客户-坐席关系不变，走 AI 接待状态机
+                syncLeadActivityIfPresent(customerPhone, contactName, assignedAgent, activityRowId);
                 ConversationEntity conversation = conversationRepository.findFirstByResourceIdAndStatusInOrderByCreatedAtDesc(
                         resourceRepository.findByCustomerPhone(customerPhone).map(ResourceEntity::getId).orElse(null),
                         java.util.List.of(ConversationStatus.ACTIVE, ConversationStatus.AI_ACTIVE, ConversationStatus.HUMAN_ACTIVE)
@@ -243,12 +252,6 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
 
             // 5) CRM lead integration + local assignment (CRM failures never block assignment)
             if (hasOnlineAgent) {
-                String activityRowId = clueIntegrationService.resolveActivityRowIdFromAdContext(
-                        parsed.getReferralWelcomeText(),
-                        parsed.getReferralHeadline(),
-                        parsed.getReferralBody(),
-                        customerContent
-                ).orElse(null);
                 // ── Step 5a: Look up CRM lead by phone (fallback to local DB) ──
                 LeadRecord lead = null;
                 try {
@@ -350,6 +353,15 @@ public class WhatsAppWebhookServiceImpl implements WhatsAppWebhookService {
             }
         } catch (Exception ex) {
             log.error("Process one message failed unexpectedly", ex);
+        }
+    }
+
+    private void syncLeadActivityIfPresent(String customerPhone, String contactName, String assignedAgent, String activityRowId) {
+        if (!StringUtils.hasText(activityRowId)) return;
+        try {
+            clueIntegrationService.syncLeadOnAssignment(customerPhone, contactName, assignedAgent, activityRowId);
+        } catch (Exception ex) {
+            log.warn("Lead activity sync failed. customer={}, agent={}", customerPhone, assignedAgent, ex);
         }
     }
 

@@ -57,6 +57,8 @@ class DashboardAnalyticsIntegrationTest {
                 "managed", "day", "2026-07-01", "2026-07-31", null);
 
         assertThat(result.cards().leadCount()).isEqualTo(1);
+        assertThat(result.cards().assignedLeadCount()).isEqualTo(1);
+        assertThat(result.cards().unassignedLeadCount()).isZero();
         assertThat(result.cards().firstResponseAvgSeconds()).isEqualTo(60);
         assertThat(result.cards().firstResponseP50Seconds()).isEqualTo(60);
         assertThat(result.cards().averageResponseSeconds()).isEqualTo(120);
@@ -65,6 +67,11 @@ class DashboardAnalyticsIntegrationTest {
         assertThat(result.cards().resolvedConversations()).isEqualTo(1);
         assertThat(result.leadTrend()).filteredOn(p -> p.bucket().equals("2026-07-02"))
                 .singleElement().extracting("leadCount").isEqualTo(1L);
+        assertThat(result.leadTrend()).filteredOn(p -> p.bucket().equals("2026-07-02"))
+                .singleElement().satisfies(point -> {
+                    assertThat(point.assignedLeadCount()).isEqualTo(1);
+                    assertThat(point.unassignedLeadCount()).isZero();
+                });
         assertThat(result.agentStats()).anySatisfy(stats -> {
             assertThat(stats.agentId()).isEqualTo(agent);
             assertThat(stats.agentName()).isEqualTo("TMK " + prefix);
@@ -75,6 +82,48 @@ class DashboardAnalyticsIntegrationTest {
             assertThat(stats.agentId()).isEqualTo(manager);
             assertThat(stats.firstResponseAvgSeconds()).isNull();
             assertThat(stats.averageResponseSeconds()).isNull();
+        });
+    }
+
+    @Test
+    void ownerLeadCountsMatchDailyReportScopeAndIncludeUnassignedLeads() {
+        String prefix = prefix();
+        String owner = prefix + "-owner";
+        String agent = prefix + "-agent";
+        String abnormalAgent = "tmk-1";
+        agentAccounts.upsert(agent, "TMK " + prefix, AgentRole.TMK, List.of());
+        agentAccounts.upsert(abnormalAgent, "Test TMK", AgentRole.TMK, List.of());
+
+        Fixture sameDay = fixture(prefix + "-phone-same", agent, Instant.parse("2026-07-02T02:00:00Z"));
+        assignment(sameDay, agent, Instant.parse("2026-07-02T02:00:00Z"));
+        message(sameDay, PersistenceEnums.SenderType.CUSTOMER, Instant.parse("2026-07-02T02:00:00Z"));
+
+        Fixture carryOver = fixture(prefix + "-phone-carry", agent, Instant.parse("2026-07-01T15:00:00Z"));
+        assignment(carryOver, agent, Instant.parse("2026-07-02T03:00:00Z"));
+        message(carryOver, PersistenceEnums.SenderType.CUSTOMER, Instant.parse("2026-07-01T15:00:00Z"));
+
+        Fixture abnormal = fixture(prefix + "-phone-abnormal", abnormalAgent, Instant.parse("2026-07-02T04:00:00Z"));
+        assignment(abnormal, abnormalAgent, Instant.parse("2026-07-02T04:00:00Z"));
+        message(abnormal, PersistenceEnums.SenderType.CUSTOMER, Instant.parse("2026-07-02T04:00:00Z"));
+
+        unassignedConversation(prefix + "-phone-unassigned", Instant.parse("2026-07-02T05:00:00Z"));
+
+        DashboardAnalytics result = dashboard.analytics(
+                user(owner, AgentRole.OWNER, List.of()),
+                "all", "day", "2026-07-02", "2026-07-02", null);
+
+        assertThat(result.cards().leadCount()).isEqualTo(2);
+        assertThat(result.cards().assignedLeadCount()).isEqualTo(1);
+        assertThat(result.cards().unassignedLeadCount()).isEqualTo(1);
+        assertThat(result.leadTrend()).singleElement().satisfies(point -> {
+            assertThat(point.bucket()).isEqualTo("2026-07-02");
+            assertThat(point.leadCount()).isEqualTo(2);
+            assertThat(point.assignedLeadCount()).isEqualTo(1);
+            assertThat(point.unassignedLeadCount()).isEqualTo(1);
+        });
+        assertThat(result.agentStats()).anySatisfy(stats -> {
+            assertThat(stats.agentId()).isEqualTo(agent);
+            assertThat(stats.leadCount()).isEqualTo(1);
         });
     }
 
@@ -132,8 +181,25 @@ class DashboardAnalyticsIntegrationTest {
         conversation.setStatus(PersistenceEnums.ConversationStatus.HUMAN_ACTIVE);
         conversation.setFirstCustomerMessageAt(firstCustomerAt);
         conversation.setFirstAgentReplyAt(firstCustomerAt.plusSeconds(60));
+        conversation.setCreatedAt(firstCustomerAt);
         conversation = conversations.saveAndFlush(conversation);
         return new Fixture(resource, conversation);
+    }
+
+    private void unassignedConversation(String phone, Instant createdAt) {
+        ResourceEntity resource = new ResourceEntity();
+        resource.setCustomerPhone(phone);
+        resource.setResourceStatus(PersistenceEnums.ResourceStatus.PENDING_ASSIGNMENT);
+        resource = resources.saveAndFlush(resource);
+
+        ConversationEntity conversation = new ConversationEntity();
+        conversation.setResourceId(resource.getId());
+        conversation.setCustomerPhone(phone);
+        conversation.setAssignedAgentId(null);
+        conversation.setStatus(PersistenceEnums.ConversationStatus.ACTIVE);
+        conversation.setFirstCustomerMessageAt(createdAt);
+        conversation.setCreatedAt(createdAt);
+        conversations.saveAndFlush(conversation);
     }
 
     private void assignment(Fixture fixture, String agent, Instant at) {

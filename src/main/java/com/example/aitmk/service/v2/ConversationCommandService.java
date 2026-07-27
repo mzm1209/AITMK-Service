@@ -150,12 +150,13 @@ public class ConversationCommandService {
                     resource.getCustomerPhone(), targetAgentId, ex);
         }
         try {
+            String activityRowId = clueIntegrationService.resolveActivityRowIdForCustomer(resource.getCustomerPhone()).orElse(null);
             var lead = clueIntegrationService.lookupLeadByPhone(resource.getCustomerPhone())
                     .or(() -> clueIntegrationService.createLeadForNewCustomer(
-                            resource.getCustomerPhone(), resource.getCustomerName(), targetAgentId));
+                            resource.getCustomerPhone(), resource.getCustomerName(), targetAgentId, activityRowId));
             lead.map(com.example.aitmk.model.domain.LeadRecord::getRowId)
                     .filter(rowId -> rowId != null && !rowId.isBlank())
-                    .ifPresent(rowId -> clueIntegrationService.updateLeadOnAssignment(rowId, targetAgentId));
+                    .ifPresent(rowId -> clueIntegrationService.updateLeadOnAssignment(rowId, targetAgentId, activityRowId));
         } catch (Exception ex) {
             log.warn("CRM lead update for transfer failed. customer={}, agent={}",
                     resource.getCustomerPhone(), targetAgentId, ex);

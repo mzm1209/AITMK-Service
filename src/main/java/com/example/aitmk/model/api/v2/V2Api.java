@@ -73,6 +73,8 @@ public final class V2Api {
             List<DashboardAgentStats> agentStats) {}
     public record DashboardAnalyticsCards(
             long leadCount,
+            long assignedLeadCount,
+            long unassignedLeadCount,
             Long firstResponseAvgSeconds,
             Long firstResponseP50Seconds,
             Long firstResponseP90Seconds,
@@ -81,7 +83,7 @@ public final class V2Api {
             long activeConversations,
             long resolvedConversations,
             double averageResolvedConversations) {}
-    public record LeadTrendPoint(String bucket, long leadCount) {}
+    public record LeadTrendPoint(String bucket, long leadCount, long assignedLeadCount, long unassignedLeadCount) {}
     public record ResponseTrendPoint(String bucket, Long firstResponseAvgSeconds, Long averageResponseSeconds) {}
     public record DashboardAgentStats(
             String agentId,
