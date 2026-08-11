@@ -12,7 +12,7 @@ class FlywayMigrationPathTest {
     @Test void emptyDatabaseMigratesThroughV1AndV2() throws Exception {
         String url="jdbc:h2:mem:flyway_empty;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1";
         Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations(H2_MIGRATIONS).load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(13);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(16);
         assertV2(url);
     }
 
@@ -22,9 +22,9 @@ class FlywayMigrationPathTest {
         try(var c=DriverManager.getConnection(url,"sa","");var s=c.createStatement()){s.execute("drop table flyway_schema_history");}
         Flyway flyway=Flyway.configure().dataSource(url,"sa","").locations(H2_MIGRATIONS)
                 .baselineOnMigrate(true).baselineVersion(MigrationVersion.fromVersion("1")).load();
-        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(12);
+        assertThat(flyway.migrate().migrationsExecuted).isEqualTo(15);
         assertV2(url);
     }
 
-    private void assertV2(String url)throws Exception{try(var c=DriverManager.getConnection(url,"sa","");var s=c.createStatement()){var columns=s.executeQuery("select count(*) from information_schema.columns where table_name='conversation' and column_name='version'");columns.next();assertThat(columns.getInt(1)).isEqualTo(1);var tables=s.executeQuery("select count(*) from information_schema.tables where table_name='realtime_event'");tables.next();assertThat(tables.getInt(1)).isEqualTo(1);var quickReplies=s.executeQuery("select count(*) from information_schema.tables where table_name='agent_quick_replies'");quickReplies.next();assertThat(quickReplies.getInt(1)).isEqualTo(1);var leadColumns=s.executeQuery("select count(*) from information_schema.columns where table_name='lead_records' and column_name in ('leads_type','leads_status')");leadColumns.next();assertThat(leadColumns.getInt(1)).isEqualTo(2);}}
+    private void assertV2(String url)throws Exception{try(var c=DriverManager.getConnection(url,"sa","");var s=c.createStatement()){var columns=s.executeQuery("select count(*) from information_schema.columns where table_name='conversation' and column_name='version'");columns.next();assertThat(columns.getInt(1)).isEqualTo(1);var tables=s.executeQuery("select count(*) from information_schema.tables where table_name='realtime_event'");tables.next();assertThat(tables.getInt(1)).isEqualTo(1);var quickReplies=s.executeQuery("select count(*) from information_schema.tables where table_name='agent_quick_replies'");quickReplies.next();assertThat(quickReplies.getInt(1)).isEqualTo(1);var leadColumns=s.executeQuery("select count(*) from information_schema.columns where table_name='lead_records' and column_name in ('leads_type','leads_status')");leadColumns.next();assertThat(leadColumns.getInt(1)).isEqualTo(2);var aiTables=s.executeQuery("select count(*) from information_schema.tables where table_name in ('ai_conversation_analysis','ai_analysis_module','ai_action_draft','ai_analysis_trigger')");aiTables.next();assertThat(aiTables.getInt(1)).isEqualTo(4);}}
 }

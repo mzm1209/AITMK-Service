@@ -51,7 +51,7 @@ public class DifyWorkflowClient {
                     .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
-                    .block(Duration.ofSeconds(Math.max(1, properties.getTimeoutSeconds())));
+                    .block(Duration.ofSeconds(timeoutSeconds()));
             return parse(raw);
         } catch (WebClientResponseException ex) {
             throw new V2Exception(HttpStatus.BAD_GATEWAY, "DIFY_WORKFLOW_FAILED",
@@ -59,9 +59,24 @@ public class DifyWorkflowClient {
         } catch (V2Exception ex) {
             throw ex;
         } catch (Exception ex) {
+            if (isBlockingTimeout(ex)) {
+                throw new V2Exception(HttpStatus.BAD_GATEWAY, "DIFY_TIMEOUT",
+                        "Dify Workflow 调用超时: 本地等待超过 " + timeoutSeconds() + " 秒，Dify 可能仍在后台完成");
+            }
             throw new V2Exception(HttpStatus.BAD_GATEWAY, "DIFY_WORKFLOW_FAILED",
                     "Dify Workflow 调用失败: " + safeMessage(ex));
         }
+    }
+
+    private int timeoutSeconds() {
+        return Math.max(1, properties.getTimeoutSeconds());
+    }
+
+    private boolean isBlockingTimeout(Exception ex) {
+        String message = ex.getMessage();
+        return ex instanceof IllegalStateException
+                && message != null
+                && message.contains("Timeout on blocking read");
     }
 
     DifyWorkflowResult parse(String raw) {

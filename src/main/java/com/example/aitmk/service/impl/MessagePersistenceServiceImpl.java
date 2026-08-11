@@ -31,6 +31,7 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
     private final UnreadService unreadService;
     private final RealtimeEventService realtimeEventService;
     private final RealtimePayloadFactory realtimePayloadFactory;
+    private final com.example.aitmk.service.v2.AiConversationAutoTriggerService aiConversationAutoTriggerService;
 
     @Override @Transactional(readOnly = true)
     public boolean existsExternalMessage(String id) {
@@ -88,6 +89,7 @@ public class MessagePersistenceServiceImpl implements MessagePersistenceService 
                     conversation.getId(), conversation.getAssignedAgentId(), conversation.getVersion(),
                     realtimePayloadFactory.conversation(conversation, conversation.getAssignedAgentId()));
         }
+        aiConversationAutoTriggerService.onCustomerMessage(conversation, message);
         return IncomingResult.CREATED;
     }
 

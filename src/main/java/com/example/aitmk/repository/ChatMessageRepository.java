@@ -30,5 +30,6 @@ public interface ChatMessageRepository extends JpaRepository<ChatMessageEntity, 
                                       @Param("beforeAt") java.time.Instant beforeAt,
                                       @Param("beforeId") Long beforeId, Pageable pageable);
     long countByConversationIdAndSenderType(Long conversationId, SenderType senderType);
+    Optional<ChatMessageEntity> findFirstByConversationIdAndSenderTypeOrderByCreatedAtDescIdDesc(Long conversationId, SenderType senderType);
     long countByConversationIdAndSenderTypeAndIdGreaterThan(Long conversationId, SenderType senderType, Long id);
 }

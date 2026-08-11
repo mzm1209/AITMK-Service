@@ -11,6 +11,6 @@ public class AiDifyWorkflowProperties {
     private boolean enabled = true;
     private String baseUrl = "";
     private String apiKey = "";
-    private int timeoutSeconds = 300;
+    private int timeoutSeconds = 900;
     private String dailyReportUser = "aitmk-ai-daily-report";
 }

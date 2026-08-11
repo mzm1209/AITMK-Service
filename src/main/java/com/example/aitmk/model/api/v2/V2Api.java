@@ -182,6 +182,20 @@ public final class V2Api {
             Instant updatedAt) {}
     public record QuickReplyListView(List<QuickReplyView> items) {}
 
+    // ── AI Conversation Assistant ──
+    public record AiAnalysisRequest(Boolean force, List<String> modules, String outputLocale, String replyLanguage) {}
+    public record AiAnalysisAccepted(String analysisId, String status, boolean reused, String basisLastMessageId) {}
+    public record AiAnalysisView(boolean available, boolean manualAnalysisAllowed, boolean autoAnalysisEligible,
+            String reason, String analysisId, String conversationId, String resourceId, String leadRowId,
+            String assigneeId, String triggerType, String status, String basisLastMessageId,
+            String currentLastMessageId, boolean stale, Instant generatedAt, Map<String,Object> modules) {}
+    public record AiDraftView(String draftId, String analysisId, String conversationId, String draftType,
+            String status, Object payload, String externalRowId, String confirmedBy, Instant confirmedAt,
+            String errorCode, String errorMessage) {}
+    public record AiDraftListView(List<AiDraftView> items) {}
+    public record AiDraftApplyRequest(String conversationId, String expectedAssigneeId, Map<String,Object> payload) {}
+    public record AiDraftDiscardRequest(String reasonCode, String remark) {}
+
     // ── CRM Profile / Link Lead ──
     public record CrmProfileView(
             String resourceId, String customerPhone, String customerName,
